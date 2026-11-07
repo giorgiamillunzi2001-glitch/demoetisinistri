@@ -42,6 +42,13 @@ def render() -> None:
                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
     st.plotly_chart(fig, width="stretch")
     st.caption("Champion: regressione logistica su feature standardizzate. Rosso: aumenta il rischio. Grigio: lo riduce.")
+    metodo = p.get("metodo_score", "")
+    if metodo.startswith("cross_validation"):
+        k = metodo.split("_")[2]
+        st.caption(f"Lo score di ogni gruppo è calcolato in cross-validation a {k} fold: "
+                   "viene da un modello addestrato senza quel gruppo, quindi le metriche di confronto non sono gonfiate.")
+    else:
+        st.caption("Gruppi troppo pochi per la cross-validation: score calcolato sul modello addestrato con tutti i gruppi.")
     with st.expander("Tabella coefficienti"):
         tab = coef.sort_values("Coefficiente", ascending=False).copy()
         tab["Coefficiente"] = tab["Coefficiente"].map(lambda v: numero(v, 3))

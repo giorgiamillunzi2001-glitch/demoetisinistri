@@ -4,7 +4,10 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+from sklearn.base import clone
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
 from .anomaly import calcola_anomaly_score
 from .communities import trova_gruppi
@@ -23,6 +26,21 @@ ROOT = Path(__file__).resolve().parents[1]
 def _root_path(value: str | Path) -> Path:
     path = Path(value)
     return path if path.is_absolute() else ROOT / path
+
+
+def _score_fuori_campione(champion, X: pd.DataFrame, y: pd.Series) -> tuple[np.ndarray, str]:
+    """Score di ogni gruppo calcolato da un modello addestrato SENZA quel gruppo.
+
+    Usa una cross-validation stratificata (fino a 5 fold): lo score non "ricorda" l'etichetta
+    del gruppo stesso, quindi le metriche di confronto sono oneste. Se ci sono troppo pochi
+    gruppi per classe (meno di 2) si ripiega sullo score in-sample del modello completo.
+    """
+    min_classe = int(y.value_counts().min()) if y.nunique() == 2 else 0
+    if min_classe < 2:
+        return champion.predict_proba(X)[:, 1], "in_sample"
+    cv = StratifiedKFold(n_splits=min(5, min_classe), shuffle=True, random_state=42)
+    probs = cross_val_predict(clone(champion), X, y, cv=cv, method="predict_proba")[:, 1]
+    return probs, f"cross_validation_{cv.get_n_splits()}_fold"
 
 
 def esegui_pipeline(config: dict | None = None) -> dict:
@@ -92,7 +110,7 @@ def esegui_pipeline(config: dict | None = None) -> dict:
         y_train = pd.concat([y, pd.Series([0 if y.iloc[0] == 1 else 1])], ignore_index=True)
     champion, coefs = fit_champion(X_train, y_train)
     challenger = fit_challenger(X_train, y_train)
-    probs = champion.predict_proba(X)[:, 1]
+    probs, metodo = _score_fuori_campione(champion, X, y)
     features_df["score_rete"] = [round(100 * p) for p in probs]
     features_df["fascia"] = features_df["score_rete"].apply(lambda score: assegna_fascia(score, cfg.get("scoring", {}).get("soglia_media", 40), cfg.get("scoring", {}).get("soglia_alta", 70)))
 
@@ -130,6 +148,7 @@ def esegui_pipeline(config: dict | None = None) -> dict:
         "grafo_proiettato": G_proj,
         "coefficienti": coefs,
         "model_cols": model_cols,
+        "metodo_score": metodo,
         "sinistri": sinistri,
         "coinvolgimenti": coinvolgimenti,
         "communities": community_map,

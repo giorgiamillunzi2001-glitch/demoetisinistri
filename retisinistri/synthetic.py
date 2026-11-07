@@ -133,7 +133,7 @@ def _generate_fraud_ring(ring_index: int, rng: np.random.Generator, base_date: d
     ring_claims: list[dict] = []
     involvements: list[dict] = []
     people_count = int(rng.integers(6, 10))
-    claim_count = int(rng.integers(8, 15))
+    claim_count = int(rng.integers(5, 15))
     shared_phones = [_safe_phone(rng) for _ in range(int(rng.integers(1, 3)))]
     shared_ibans = [_safe_iban(rng) for _ in range(int(rng.integers(1, 3)))]
     same_shop = _officina(rng)
@@ -217,7 +217,7 @@ def _generate_legit_group(kind: str, rng: np.random.Generator, base_date: dateti
         autisti = [_persona(rng) for _ in range(int(rng.integers(3, 7)))]
         membri = [responsabile, *autisti]
         phones = {m: _safe_phone(rng) for m in membri}
-        claim_count = int(rng.integers(4, 9))
+        claim_count = int(rng.integers(5, 13))
     cars = {m: _targa(rng) for m in membri}
     # le flotte usano spesso l'officina convenzionata e possono avere sinistri ravvicinati
     hub_prob = float(rng.uniform(0.5, 0.85)) if kind == "flotta" else 0.15
