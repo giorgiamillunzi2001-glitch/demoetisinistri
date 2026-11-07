@@ -1,65 +1,67 @@
+"""Analisi > Storico decisioni."""
 from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
 
-from common import DECISIONI, ESITI, pipeline, vai_a_gruppo
+from common import DECISIONI, ESITI, data_ora_it, percentuale, pipeline, vai_a_gruppo
 from retisinistri.decisions import dataset_riaddestramento, lista_decisioni
 
-p = pipeline()
-alerts = {a["id_gruppo"]: a for a in p["alerts"]}
 
-st.title("⚖️ Decisioni")
-st.caption("Storico delle decisioni dei liquidatori (human-in-the-loop). Gli esiti definitivi alimentano il riaddestramento del modello.")
+def render() -> None:
+    alerts = {a["id_gruppo"]: a for a in pipeline()["alerts"]}
 
-storico = pd.DataFrame(lista_decisioni())
-if storico.empty:
-    st.info("Nessuna decisione registrata. Apri un alert dalla **Coda alert** e registra la tua decisione nella scheda *Decisione*.")
-    st.page_link("views/alert.py", label="Vai alla coda alert", icon="🚨")
-    st.stop()
+    st.subheader("Storico decisioni")
+    storico = pd.DataFrame(lista_decisioni())
+    if storico.empty:
+        st.write("Nessuna decisione registrata.")
+        return
 
-ultime = storico.drop_duplicates("id_gruppo", keep="first")
-c = st.columns(4)
-c[0].metric("Decisioni registrate", len(storico))
-c[1].metric("Alert gestiti", f"{ultime['id_gruppo'].isin(alerts).sum()} / {len(alerts)}")
-c[2].metric("Frodi confermate", int((ultime["esito_finale"] == "frode_confermata").sum()))
-override = ultime[ultime["id_gruppo"].isin(alerts) & (ultime["decisione"].isin(["liquidazione", "archiviazione"]))]
-c[3].metric("Override del modello", f"{len(override) / max(1, len(ultime)):.0%}",
-            help="Quota di gruppi segnalati dal modello che il liquidatore ha deciso di liquidare o archiviare")
+    ultime = storico.drop_duplicates("id_gruppo", keep="first")
+    override = ultime[ultime["id_gruppo"].isin(alerts) & ultime["decisione"].isin(["liquidazione", "archiviazione"])]
+    c = st.columns(4)
+    c[0].metric("Decisioni registrate", len(storico))
+    c[1].metric("Alert gestiti", f"{int(ultime['id_gruppo'].isin(alerts).sum())} su {len(alerts)}")
+    c[2].metric("Frodi confermate", int((ultime["esito_finale"] == "frode_confermata").sum()))
+    c[3].metric("Override del modello", percentuale(len(override) / max(1, len(ultime))),
+                help="Gruppi segnalati che il liquidatore ha archiviato o liquidato")
 
-f1, f2, f3 = st.columns(3)
-liq = f1.multiselect("Liquidatore", sorted(storico["id_liquidatore"].unique()))
-dec = f2.multiselect("Decisione", list(DECISIONI), format_func=DECISIONI.get)
-esi = f3.multiselect("Esito", list(ESITI), format_func=ESITI.get)
-vista = storico
-if liq:
-    vista = vista[vista["id_liquidatore"].isin(liq)]
-if dec:
-    vista = vista[vista["decisione"].isin(dec)]
-if esi:
-    vista = vista[vista["esito_finale"].isin(esi)]
-vista = vista.assign(
-    decisione=vista["decisione"].map(lambda x: DECISIONI.get(x, x)),
-    esito_finale=vista["esito_finale"].map(lambda x: ESITI.get(x, x)),
-    score_rete=vista["id_gruppo"].map(lambda g: alerts.get(g, {}).get("score_rete")),
-)[["timestamp", "id_gruppo", "score_rete", "id_liquidatore", "decisione", "esito_finale", "note"]]
+    f1, f2, f3 = st.columns(3)
+    liq = f1.multiselect("Liquidatore", sorted(storico["id_liquidatore"].unique()))
+    dec = f2.multiselect("Decisione", list(DECISIONI), format_func=DECISIONI.get)
+    esi = f3.multiselect("Esito", list(ESITI), format_func=ESITI.get)
+    vista = storico
+    if liq:
+        vista = vista[vista["id_liquidatore"].isin(liq)]
+    if dec:
+        vista = vista[vista["decisione"].isin(dec)]
+    if esi:
+        vista = vista[vista["esito_finale"].isin(esi)]
+    vista = pd.DataFrame({
+        "Data e ora": vista["timestamp"].map(data_ora_it),
+        "Gruppo": vista["id_gruppo"],
+        "Score di rete": vista["id_gruppo"].map(lambda g: alerts.get(g, {}).get("score_rete")),
+        "Liquidatore": vista["id_liquidatore"],
+        "Decisione": vista["decisione"].map(lambda x: DECISIONI.get(x, x)),
+        "Esito": vista["esito_finale"].map(lambda x: ESITI.get(x, x)),
+        "Note": vista["note"],
+    })
 
-ev = st.dataframe(vista, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
-                  column_config={"timestamp": "Data/ora (UTC)", "id_gruppo": "Gruppo", "score_rete": "Score rete",
-                                 "id_liquidatore": "Liquidatore", "decisione": "Decisione", "esito_finale": "Esito", "note": "Note"})
-col_a, col_b = st.columns([1, 4])
-col_a.download_button("⬇️ Esporta CSV", vista.to_csv(index=False).encode("utf-8"), "decisioni.csv", "text/csv")
-if ev.selection.rows:
-    g = vista.iloc[ev.selection.rows[0]]["id_gruppo"]
-    if g in alerts and col_b.button(f"🚨 Apri alert gruppo {g}"):
-        vai_a_gruppo(g)
+    ev = st.dataframe(vista, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
+                      key="storico_decisioni")
+    a, b = st.columns([1, 4])
+    a.download_button("Esporta CSV", vista.to_csv(index=False).encode("utf-8"), "decisioni.csv", "text/csv")
+    if ev.selection.rows:
+        g = vista.iloc[ev.selection.rows[0]]["Gruppo"]
+        if g in alerts and b.button(f"Apri gruppo {g}"):
+            vai_a_gruppo(g)
 
-st.divider()
-st.subheader("🔁 Dataset per il riaddestramento")
-st.caption("Gruppi con esito definitivo (frode confermata o regolare), pronti per essere usati come nuove etichette.")
-ds = pd.DataFrame(dataset_riaddestramento())
-if ds.empty:
-    st.caption("Ancora nessun esito definitivo.")
-else:
-    ds["esito_finale"] = ds["esito_finale"].map(lambda x: ESITI.get(x, x))
-    st.dataframe(ds, hide_index=True, width="stretch")
+    st.markdown("**Dataset per il riaddestramento**")
+    ds = pd.DataFrame(dataset_riaddestramento())
+    if ds.empty:
+        st.caption("Nessun gruppo con esito definitivo (frode confermata o regolare).")
+    else:
+        st.dataframe(pd.DataFrame({
+            "Gruppo": ds["id_gruppo"], "Decisione": ds["decisione"].map(lambda x: DECISIONI.get(x, x)),
+            "Esito": ds["esito_finale"].map(lambda x: ESITI.get(x, x)), "Note": ds["note"],
+        }), hide_index=True, width="stretch")

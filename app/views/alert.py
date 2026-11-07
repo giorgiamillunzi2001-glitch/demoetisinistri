@@ -1,156 +1,167 @@
 from __future__ import annotations
 
+import datetime as dt
+
 import pandas as pd
 import streamlit as st
 
 from common import (
     DECISIONI,
-    ESITI,
-    chip_fascia,
+    data_it,
+    data_ora_it,
+    etichetta_livello,
     euro,
     figura_grafo,
     maschera,
+    numero,
+    percentuale,
     pipeline,
     sottografo_gruppo,
     tabella_alert,
-    vai_a_sinistro,
 )
 from retisinistri.decisions import lista_decisioni, salva_decisione
 from retisinistri.explain_llm import spiega_alert
 
 p = pipeline()
 alerts = {a["id_gruppo"]: a for a in p["alerts"]}
+sinistri = p["sinistri"]
 
-st.title("🚨 Coda alert")
-st.caption("Gruppi di sinistri collegati con score di rete in fascia media o alta. Seleziona una riga per aprire il dettaglio.")
+st.title("Alert")
 
 if not alerts:
-    st.success("Nessun alert aperto.")
+    st.write("Nessun alert aperto.")
     st.stop()
 
 # --- Filtri ---------------------------------------------------------------
-decisi = {d["id_gruppo"] for d in lista_decisioni()}
-f1, f2, f3 = st.columns([2, 2, 3])
-fasce = f1.segmented_control("Fascia", ["alta", "media"], selection_mode="multi", default=["alta", "media"],
-                             format_func=lambda x: {"alta": "🔴 Alta", "media": "🟠 Media"}[x])
-stato = f2.segmented_control("Stato", ["tutti", "da lavorare", "gestiti"], default="tutti")
-score_min = f3.slider("Score di rete minimo", 0, 100, 0)
+gestiti = {d["id_gruppo"] for d in lista_decisioni()}
+f1, f2, f3 = st.columns([2, 3, 3])
+livelli = f1.segmented_control("Livello", ["Alto", "Medio"], selection_mode="multi", default=["Alto", "Medio"])
+stato = f2.segmented_control("Stato", ["Tutti", "Da lavorare", "Gestiti"], default="Tutti")
+cerca = f3.text_input("Cerca sinistro", placeholder="es. S00012", key="cerca_sinistro")
 
-df = tabella_alert(p)
-df["Stato"] = df["Gruppo"].map(lambda g: "✅ Gestito" if g in decisi else "🕒 Da lavorare")
-df = df[df["Gruppo"].map(lambda g: alerts[g]["fascia"] in (fasce or []))]
-df = df[df["Score rete"] >= score_min]
-if stato == "da lavorare":
-    df = df[~df["Gruppo"].isin(decisi)]
-elif stato == "gestiti":
-    df = df[df["Gruppo"].isin(decisi)]
+df = tabella_alert(p, gestiti)
+df = df[df["Livello"].isin(livelli or [])]
+if stato == "Da lavorare":
+    df = df[df["Stato"] == "Da lavorare"]
+elif stato == "Gestiti":
+    df = df[df["Stato"] == "Gestito"]
 df = df.reset_index(drop=True)
 
-evento = st.dataframe(
+gruppo_da_ricerca = None
+if cerca.strip():
+    codice = cerca.strip().upper()
+    trovato = sinistri[sinistri["id_sinistro"].str.upper() == codice]
+    if trovato.empty:
+        st.warning(f"Sinistro {codice} non trovato.")
+    else:
+        g = trovato.iloc[0]["id_gruppo"]
+        if g in alerts:
+            gruppo_da_ricerca = g
+        else:
+            st.info(f"Sinistro {codice} non collegato a gruppi sospetti.")
+
+ev = st.dataframe(
     df,
     hide_index=True,
     width="stretch",
     on_select="rerun",
     selection_mode="single-row",
-    column_config={
-        "Score rete": st.column_config.ProgressColumn("Score rete", min_value=0, max_value=100, format="%d"),
-        "Importo totale": st.column_config.NumberColumn(format="€ %.0f"),
-    },
+    column_config={"Score di rete": st.column_config.ProgressColumn("Score di rete", min_value=0, max_value=100, format="%d")},
 )
 
-selezionato = None
-if evento.selection.rows:
-    selezionato = df.iloc[evento.selection.rows[0]]["Gruppo"]
+if gruppo_da_ricerca:
+    selezionato = gruppo_da_ricerca
+elif ev.selection.rows:
+    selezionato = df.iloc[ev.selection.rows[0]]["Gruppo"]
 elif st.session_state.get("gruppo_selezionato") in alerts:
     selezionato = st.session_state["gruppo_selezionato"]
-
-opzioni = list(df["Gruppo"]) or list(alerts)
-if selezionato not in opzioni:
-    selezionato = opzioni[0]
-selezionato = st.selectbox("Gruppo da analizzare", opzioni, index=opzioni.index(selezionato),
-                           format_func=lambda g: f"Gruppo {g} · score {alerts[g]['score_rete']}")
+elif not df.empty:
+    selezionato = df.iloc[0]["Gruppo"]
+else:
+    st.stop()
 st.session_state["gruppo_selezionato"] = selezionato
 
-# --- Dettaglio ------------------------------------------------------------
+# --- Dettaglio del gruppo ------------------------------------------------
 a = alerts[selezionato]
 f = a["feature_gruppo"]
-sinistri = p["sinistri"]
 ids = sinistri.loc[sinistri["id_gruppo"] == str(selezionato), "id_sinistro"].tolist()
 coinv = p["coinvolgimenti"][p["coinvolgimenti"]["id_sinistro"].isin(ids)]
 
 st.divider()
-st.markdown(f"## Gruppo {selezionato} &nbsp; {chip_fascia(a['fascia'])}", unsafe_allow_html=True)
+st.markdown(f"<h2 style='margin-bottom:0'>Gruppo {selezionato} &nbsp;{etichetta_livello(a['fascia'])}</h2>", unsafe_allow_html=True)
+st.caption(f"{int(f['n_sinistri'])} sinistri · {int(f['n_persone'])} persone · {euro(f['importo_totale'])}")
 
-k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Score di rete", f"{a['score_rete']}/100")
-k2.metric("Score AS-IS medio", f"{a['score_pratica_medio']:.0f}/100", help="Punteggio delle regole tradizionali sulla singola pratica")
-k3.metric("Sinistri", int(f["n_sinistri"]))
-k4.metric("Persone coinvolte", int(f["n_persone"]))
-k5.metric("Importo richiesto", euro(f["importo_totale"]))
+m1, m2, m3 = st.columns(3)
+m1.metric("Score di rete", f"{a['score_rete']}/100")
+m2.metric("Punteggio regole attuali (media)", f"{a['score_pratica_medio']:.0f}/100")
+m3.metric("Finestra temporale", f"{int(f['finestra_giorni'])} giorni", help="Giorni tra il primo e l'ultimo sinistro del gruppo")
 
-tab_perche, tab_rete, tab_sinistri, tab_persone, tab_decisione = st.tabs(
-    ["💡 Perché è segnalato", "🕸️ Rete", "📋 Sinistri", "👥 Persone e contatti", "⚖️ Decisione"]
-)
-
-with tab_perche:
-    st.markdown("#### Reason code")
-    for r in a["reason_codes"] or ["Nessun reason code disponibile"]:
-        st.markdown(f"<div class='rs-reason'>{r}</div>", unsafe_allow_html=True)
-
-    st.markdown("#### Spiegazione per il liquidatore")
+sx, dx = st.columns([2, 3], gap="large")
+with sx:
+    st.subheader("Motivazioni")
+    st.markdown("\n".join(f"- {r}" for r in a["reason_codes"]) or "Nessuna motivazione disponibile.")
     chiave = f"spiegazione_{selezionato}"
-    if st.button("✨ Genera spiegazione", key=f"btn_{chiave}"):
+    if st.button("Genera spiegazione"):
         with st.spinner("Generazione in corso…"):
             st.session_state[chiave] = spiega_alert(a)
     if chiave in st.session_state:
-        st.info(st.session_state[chiave])
-        st.caption("Generata da LLM se configurato (ANTHROPIC_API_KEY), altrimenti dal testo deterministico. "
-                   "Dati sensibili mascherati e numeri verificati contro l'input.")
+        with st.container(border=True):
+            st.write(st.session_state[chiave])
+with dx:
+    st.plotly_chart(figura_grafo(sottografo_gruppo(p, ids)), width="stretch")
 
-    st.markdown("#### Indicatori di rete")
-    ind = pd.DataFrame(
-        [
-            ("Finestra temporale", f"{int(f['finestra_giorni'])} giorni"),
-            ("Sinistri per IBAN", f"{f['sinistri_per_iban']:.1f}"),
-            ("Sinistri per telefono", f"{f['sinistri_per_telefono']:.1f}"),
-            ("Quota officina più frequente", f"{f['quota_officina_top']:.0%}"),
-            ("Quota avvocato più frequente", f"{f['quota_avvocato_top']:.0%}"),
-            ("Persone con più ruoli", f"{int(f['persone_multi_ruolo'])}"),
-            ("Densità della rete", f"{f['densita']:.2f}"),
-            ("Ricorrenze testimone", f"{int(f['testimone_ricorrente_max'])}"),
-            ("Anomaly score", f"{a['anomaly_score']:.2f}"),
-        ],
-        columns=["Indicatore", "Valore"],
-    )
-    st.dataframe(ind, hide_index=True, width="stretch")
+# --- Decisione ------------------------------------------------------------
+st.subheader("Decisione")
+note = st.text_input("Note (facoltative)", key=f"note_{selezionato}")
+b1, b2, _ = st.columns([1, 1, 2])
+scelta = None
+if b1.button("Avvia approfondimento", type="primary", width="stretch"):
+    scelta = "approfondimento"
+if b2.button("Archivia (falso positivo)", width="stretch"):
+    scelta = "archiviazione"
+if scelta:
+    liquidatore = str(st.session_state.get("id_liquidatore", "")).strip()
+    if not liquidatore:
+        st.warning("Inserisci l'ID liquidatore nella barra laterale.")
+    else:
+        salva_decisione(f"alert-{selezionato}", str(selezionato), liquidatore, scelta, "in_corso", note)
+        st.session_state["ultimo_salvataggio"] = (
+            selezionato,
+            f"Decisione registrata: {DECISIONI[scelta]} · {dt.datetime.now():%d/%m/%Y %H:%M} · {liquidatore}",
+        )
+        st.rerun()
 
-with tab_rete:
-    deboli = st.toggle("Mostra anche officine, periti e avvocati (legami deboli)", value=True)
-    H = sottografo_gruppo(p, ids, includi_deboli=deboli)
-    st.plotly_chart(figura_grafo(H), width="stretch")
-    st.caption("Passa il mouse sui nodi per i dettagli. IBAN e telefoni sono mascherati.")
+salvato = st.session_state.get("ultimo_salvataggio")
+if salvato and salvato[0] == selezionato:
+    st.success(salvato[1])
 
-with tab_sinistri:
-    cols = ["id_sinistro", "data_sinistro", "data_denuncia", "importo_richiesto", "giorni_da_inizio_polizza",
-            "orario_notturno", "verbale_autorita", "id_officina", "id_avvocato", "score_pratica", "alert_asis"]
-    tab = sinistri[sinistri["id_sinistro"].isin(ids)][cols].sort_values("data_sinistro")
-    ev = st.dataframe(
-        tab, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
-        column_config={
-            "importo_richiesto": st.column_config.NumberColumn("Importo", format="€ %.2f"),
-            "score_pratica": st.column_config.NumberColumn("Score AS-IS"),
-            "alert_asis": st.column_config.CheckboxColumn("Alert AS-IS"),
-        },
-        key=f"tab_sin_{selezionato}",
-    )
-    n_asis = int(tab["alert_asis"].sum())
-    st.caption(f"Le regole AS-IS avrebbero segnalato **{n_asis} su {len(tab)}** sinistri di questo gruppo.")
-    if ev.selection.rows:
-        sid = tab.iloc[ev.selection.rows[0]]["id_sinistro"]
-        if st.button(f"Apri scheda sinistro {sid}"):
-            vai_a_sinistro(sid)
+storico = lista_decisioni(selezionato)
+if storico:
+    st.caption("Decisioni precedenti  \n" + "  \n".join(
+        f"{data_ora_it(d['timestamp'])} · {DECISIONI.get(d['decisione'], d['decisione'])} · {d['id_liquidatore']}"
+        + (f" · {d['note']}" if d["note"] else "")
+        for d in storico[:5]
+    ))
 
-with tab_persone:
+# --- Approfondimenti ------------------------------------------------------
+with st.expander("Sinistri del gruppo"):
+    tab = sinistri[sinistri["id_sinistro"].isin(ids)].sort_values("data_sinistro")
+    vista = pd.DataFrame({
+        "Sinistro": tab["id_sinistro"],
+        "Data sinistro": tab["data_sinistro"].map(data_it),
+        "Data denuncia": tab["data_denuncia"].map(data_it),
+        "Importo": tab["importo_richiesto"].map(euro),
+        "Giorni dalla stipula": tab["giorni_da_inizio_polizza"],
+        "Notturno": tab["orario_notturno"].map({True: "Sì", False: "No"}),
+        "Verbale autorità": tab["verbale_autorita"].map({True: "Sì", False: "No"}),
+        "Officina": tab["id_officina"],
+        "Avvocato": tab["id_avvocato"],
+        "Punteggio regole attuali": tab["score_pratica"].astype(int),
+    })
+    st.dataframe(vista, hide_index=True, width="stretch")
+    st.caption(f"Le regole attuali segnalano {int(tab['alert_asis'].sum())} sinistri su {len(tab)}.")
+
+with st.expander("Persone e contatti"):
     persone = (
         coinv.groupby("id_persona")
         .agg(
@@ -161,37 +172,33 @@ with tab_persone:
         )
         .reset_index()
         .sort_values("sinistri", ascending=False)
+        .rename(columns={"id_persona": "Persona", "ruoli": "Ruoli", "sinistri": "Sinistri",
+                         "telefoni": "Telefoni", "iban": "IBAN"})
     )
     st.dataframe(persone, hide_index=True, width="stretch")
     c1, c2 = st.columns(2)
+    tel = coinv.groupby("telefono")["id_sinistro"].nunique()
+    tel = tel[tel > 1].sort_values(ascending=False)
     c1.markdown("**Telefoni condivisi**")
-    tel = coinv.groupby("telefono")["id_sinistro"].nunique().sort_values(ascending=False)
-    c1.dataframe(tel[tel > 1].rename("sinistri").rename_axis("telefono").reset_index()
-                 .assign(telefono=lambda d: d["telefono"].map(maschera)), hide_index=True, width="stretch")
+    c1.dataframe(pd.DataFrame({"Telefono": tel.index.map(maschera), "Sinistri": tel.values}), hide_index=True, width="stretch")
+    ib = coinv.groupby("iban")["id_sinistro"].nunique()
+    ib = ib[ib > 1].sort_values(ascending=False)
     c2.markdown("**IBAN condivisi**")
-    ib = coinv.groupby("iban")["id_sinistro"].nunique().sort_values(ascending=False)
-    c2.dataframe(ib[ib > 1].rename("sinistri").rename_axis("iban").reset_index()
-                 .assign(iban=lambda d: d["iban"].map(maschera)), hide_index=True, width="stretch")
+    c2.dataframe(pd.DataFrame({"IBAN": ib.index.map(maschera), "Sinistri": ib.values}), hide_index=True, width="stretch")
 
-with tab_decisione:
-    storico = lista_decisioni(selezionato)
-    with st.form(f"form_dec_{selezionato}", clear_on_submit=True):
-        st.markdown("Registra la tua decisione. Viene salvata nello storico e, se l'esito è definitivo, usata per il riaddestramento.")
-        c1, c2, c3 = st.columns(3)
-        liquidatore = c1.text_input("ID liquidatore", value=st.session_state.get("id_liquidatore", "LQ-001"))
-        decisione = c2.selectbox("Decisione", list(DECISIONI), format_func=DECISIONI.get)
-        esito = c3.selectbox("Esito", list(ESITI), format_func=ESITI.get)
-        note = st.text_area("Note", placeholder="Es. verificati IBAN condivisi, richiesta documentazione all'officina…")
-        if st.form_submit_button("💾 Salva decisione", type="primary"):
-            if not liquidatore.strip():
-                st.error("Inserisci l'ID del liquidatore.")
-            else:
-                st.session_state["id_liquidatore"] = liquidatore.strip()
-                salva_decisione(f"alert-{selezionato}", str(selezionato), liquidatore.strip(), decisione, esito, note)
-                st.toast(f"Decisione registrata per il gruppo {selezionato}", icon="✅")
-                st.rerun()
-    st.markdown("#### Storico del gruppo")
-    if storico:
-        st.dataframe(pd.DataFrame(storico), hide_index=True, width="stretch")
-    else:
-        st.caption("Nessuna decisione registrata per questo gruppo.")
+with st.expander("Indicatori tecnici"):
+    ind = pd.DataFrame(
+        [
+            ("Finestra temporale", f"{int(f['finestra_giorni'])} giorni"),
+            ("Sinistri per IBAN", numero(f["sinistri_per_iban"], 1)),
+            ("Sinistri per telefono", numero(f["sinistri_per_telefono"], 1)),
+            ("Quota officina più frequente", percentuale(f["quota_officina_top"])),
+            ("Quota avvocato più frequente", percentuale(f["quota_avvocato_top"])),
+            ("Persone con più ruoli", str(int(f["persone_multi_ruolo"]))),
+            ("Densità della rete", numero(f["densita"], 2)),
+            ("Ricorrenze testimone", str(int(f["testimone_ricorrente_max"]))),
+            ("Indice di anomalia", numero(a["anomaly_score"], 2)),
+        ],
+        columns=["Indicatore", "Valore"],
+    )
+    st.dataframe(ind, hide_index=True, width="stretch")

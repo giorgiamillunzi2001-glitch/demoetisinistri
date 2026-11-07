@@ -17,20 +17,16 @@ py -m streamlit run app/main.py
 
 L'app si apre su http://localhost:8501. Il primo caricamento richiede qualche secondo (analisi della rete).
 
-## Sezioni dell'app
+## Pagine
 
-| Sezione | Cosa puoi fare |
+| Pagina | Contenuto |
 |---|---|
-| 🏠 **Home** | KPI principali, priorità del giorno, azioni rapide, ultime decisioni |
-| 🚨 **Coda alert** | Filtra i gruppi sospetti, apri il dettaglio: reason code, spiegazione, grafo, sinistri, persone e contatti condivisi, registra la decisione |
-| 📋 **Sinistri** | Cerca per ID, persona, IBAN, telefono, officina…; scheda completa con collegamenti diretti; esporta CSV |
-| 🕸️ **Esplora la rete** | Grafo dei gruppi sospetti, singolo gruppo, hub (officine/avvocati/periti più collegati) |
-| ➕ **Valuta nuova pratica** | Inserisci un nuovo sinistro: score AS-IS, collegamenti con gruppi noti, azione suggerita (con esempi precaricati) |
-| 📊 **AS-IS vs TO-BE** | Confronto regole tradizionali vs score di rete con soglie regolabili, stress test, simulatore pesi |
-| 💶 **Business case** | Valore economico con ipotesi modificabili e scenari |
-| ⚖️ **Decisioni** | Storico delle decisioni, filtri, export, dataset per riaddestramento |
-| 🧠 **Modello** | Importanza dei segnali, champion vs challenger, guardrail di governance |
-| ⚙️ **Impostazioni** | Soglie di rischio (salvate in `config.yaml`), rigenerazione dati sintetici, stato LLM |
+| **Panoramica** | Indicatori principali, tabella degli alert prioritari (clic su una riga per aprire il gruppo), ultime decisioni |
+| **Alert** | Filtri per livello e stato, ricerca di un sinistro, elenco dei gruppi in alert. Dettaglio del gruppo: motivazioni, spiegazione, grafo, decisione (approfondimento o archiviazione), sinistri, persone e contatti, indicatori tecnici |
+| **Nuova denuncia** | Valutazione di un nuovo sinistro: punteggio delle regole attuali, collegamenti con gruppi sospetti, azione suggerita |
+| **Analisi** | Schede *Confronto* (regole attuali vs score di rete), *Business case*, *Modello* (coefficienti, challenger, governance, rigenerazione dati, stato LLM) e *Storico decisioni* |
+
+Nella barra laterale: ID liquidatore (usato per registrare le decisioni) e, in *Impostazioni*, le soglie di rischio salvate in `config.yaml`.
 
 ## Spiegazioni con LLM (opzionale)
 
@@ -41,9 +37,9 @@ deterministico di fallback, quindi funziona comunque.
 
 ```text
 app/
-  main.py          entry point e navigazione
-  common.py        cache della pipeline, grafici, stile
-  views/           una pagina per sezione
+  main.py          entry point, navigazione e barra laterale
+  common.py        cache della pipeline, formati, grafo, stile
+  views/           home, alert, valuta, analisi (+ confronto, business, modello, decisioni usati dalle schede di Analisi)
 retisinistri/      backend: grafo, community, feature, modelli, scoring, decisioni, API FastAPI
 data/raw/          dataset sintetico (sinistri, coinvolgimenti)
 data/processed/    output della pipeline e database decisioni (SQLite)
