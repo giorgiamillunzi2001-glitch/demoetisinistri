@@ -1,0 +1,16 @@
+pandas
+numpy
+networkx
+scikit-learn
+pyyaml
+python-dotenv
+fastapi
+uvicorn
+streamlit
+pyvis
+plotly
+anthropic
+pytest
+ruff
+black
+pyarrow
