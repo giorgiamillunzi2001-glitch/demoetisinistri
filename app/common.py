@@ -19,10 +19,10 @@ if str(ROOT) not in sys.path:
 from retisinistri.config import DEFAULT_CONFIG_PATH, load_config  # noqa: E402
 from retisinistri.pipeline import esegui_pipeline  # noqa: E402
 
-# Colori per i grafici della pagina Analisi (palette validata per daltonismo)
-SERIE = ["#2a78d6", "#eb6834", "#1baf7a"]
-GRIGIO = "#8a8984"
-STATO = {"positivo": "#0ca30c", "negativo": "#d03b3b"}
+# Palette dell'app per i grafici della pagina Analisi
+PRINCIPALE = "#14213D"  # serie principale
+RISCHIO = "#C0392B"     # rischio o valori negativi
+NEUTRO = "#A6A6A6"      # tutto il resto
 
 LIVELLO = {"alta": "Alto", "media": "Medio", "bassa": "Basso"}
 

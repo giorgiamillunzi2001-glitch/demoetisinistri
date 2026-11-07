@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from common import SERIE, numero, percentuale, pipeline, ricarica_pipeline
+from common import NEUTRO, RISCHIO, numero, percentuale, pipeline, ricarica_pipeline
 from retisinistri.decisions import monitoraggio
 from retisinistri.models import FORBIDDEN_FEATURES
 from retisinistri.synthetic import genera_dataset
@@ -34,14 +34,14 @@ def render() -> None:
                          for k, v in p["coefficienti"].items()]).sort_values("Coefficiente")
     fig = go.Figure(go.Bar(
         x=coef["Coefficiente"], y=coef["Segnale"], orientation="h", marker_cornerradius=4,
-        marker_color=[SERIE[1] if v > 0 else SERIE[0] for v in coef["Coefficiente"]],
+        marker_color=[RISCHIO if v > 0 else NEUTRO for v in coef["Coefficiente"]],
         hovertemplate="%{y}<br>β = %{x:.3f}<extra></extra>",
     ))
     fig.add_vline(x=0, line_color="#52514e", line_width=1)
     fig.update_layout(height=440, margin=dict(t=10, b=10), xaxis=dict(title="Coefficiente standardizzato (β)", gridcolor="rgba(0,0,0,.06)"),
                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
     st.plotly_chart(fig, width="stretch")
-    st.caption("Champion: regressione logistica su feature standardizzate. Arancione: aumenta il rischio. Blu: lo riduce.")
+    st.caption("Champion: regressione logistica su feature standardizzate. Rosso: aumenta il rischio. Grigio: lo riduce.")
     with st.expander("Tabella coefficienti"):
         tab = coef.sort_values("Coefficiente", ascending=False).copy()
         tab["Coefficiente"] = tab["Coefficiente"].map(lambda v: numero(v, 3))

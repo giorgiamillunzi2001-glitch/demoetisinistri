@@ -34,10 +34,12 @@ else:
         width="stretch",
         on_select="rerun",
         selection_mode="single-row",
-        key="home_alert",
+        key=f"home_alert_{st.session_state.get('home_alert_ver', 0)}",
         column_config={"Score di rete": st.column_config.NumberColumn(format="%d")},
     )
     if ev.selection.rows:
+        # Nuova chiave alla prossima visita: la tabella torna senza selezione
+        st.session_state["home_alert_ver"] = st.session_state.get("home_alert_ver", 0) + 1
         vai_a_gruppo(df.iloc[ev.selection.rows[0]]["Gruppo"])
 
 if decisioni:

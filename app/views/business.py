@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from common import STATO, euro, numero, pipeline
+from common import PRINCIPALE, RISCHIO, euro, numero, pipeline
 from retisinistri.metrics import business_case
 
 
@@ -49,7 +49,7 @@ def render() -> None:
         righe.append({"Frodi extra evitate": f"{numero(q * 100, 1)}%", "Valore netto annuo": r["valore_annuo"] - costo_indagini,
                       "Primo anno": r["primo_anno"] - costo_indagini})
     df = pd.DataFrame(righe)
-    colori = [STATO["positivo"] if v >= 0 else STATO["negativo"] for v in df["Valore netto annuo"]]
+    colori = [PRINCIPALE if v >= 0 else RISCHIO for v in df["Valore netto annuo"]]
     fig = go.Figure(go.Bar(x=df["Frodi extra evitate"], y=df["Valore netto annuo"], marker_color=colori, marker_cornerradius=4,
                            text=[euro(v) for v in df["Valore netto annuo"]], textposition="outside",
                            hovertemplate="Quota %{x}<br>Valore netto: %{y:,.0f} €<extra></extra>"))
@@ -58,7 +58,7 @@ def render() -> None:
                       xaxis_title="Quota di frodi extra evitate", margin=dict(t=30, b=10),
                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", separators=",.")
     st.plotly_chart(fig, width="stretch")
-    st.caption("Verde: valore netto positivo. Rosso: negativo.")
+    st.caption("Blu scuro: valore netto positivo. Rosso: negativo.")
     tab = df.copy()
     for c in ("Valore netto annuo", "Primo anno"):
         tab[c] = tab[c].map(euro)

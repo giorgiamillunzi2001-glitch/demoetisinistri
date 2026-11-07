@@ -34,10 +34,51 @@ if not alerts:
 
 # --- Filtri ---------------------------------------------------------------
 gestiti = {d["id_gruppo"] for d in lista_decisioni()}
-f1, f2, f3 = st.columns([2, 3, 3])
-livelli = f1.segmented_control("Livello", ["Alto", "Medio"], selection_mode="multi", default=["Alto", "Medio"])
-stato = f2.segmented_control("Stato", ["Tutti", "Da lavorare", "Gestiti"], default="Tutti")
-cerca = f3.text_input("Cerca sinistro", placeholder="es. S00012", key="cerca_sinistro")
+chiave_tabella = f"tabella_alert_{st.session_state.get('tabella_alert_ver', 0)}"
+
+
+def _azzera_selezione_tabella() -> None:
+    st.session_state["tabella_alert_ver"] = st.session_state.get("tabella_alert_ver", 0) + 1
+
+
+def _cerca() -> None:
+    """La ricerca sceglie il gruppo solo nel momento in cui viene digitata."""
+    codice = st.session_state.get("cerca_sinistro", "").strip().upper()
+    st.session_state.pop("esito_ricerca", None)
+    if not codice:
+        return
+    trovato = sinistri[sinistri["id_sinistro"].str.upper() == codice]
+    if trovato.empty:
+        st.session_state["esito_ricerca"] = ("warning", f"Sinistro {codice} non trovato.")
+        return
+    g = trovato.iloc[0]["id_gruppo"]
+    if g in alerts:
+        st.session_state["gruppo_selezionato"] = g
+        st.session_state["da_ricerca"] = True
+        _azzera_selezione_tabella()
+    else:
+        st.session_state["esito_ricerca"] = ("info", f"Sinistro {codice} non collegato a gruppi sospetti.")
+
+
+def _cancella() -> None:
+    st.session_state["cerca_sinistro"] = ""
+    st.session_state.pop("esito_ricerca", None)
+
+
+f1, f2, f3, f4 = st.columns([2, 3, 3, 1], vertical_alignment="bottom")
+livelli = f1.segmented_control("Livello", ["Alto", "Medio"], selection_mode="multi", default=["Alto", "Medio"],
+                               on_change=_azzera_selezione_tabella)
+stato = f2.segmented_control("Stato", ["Tutti", "Da lavorare", "Gestiti"], default="Tutti",
+                            on_change=_azzera_selezione_tabella)
+f3.text_input("Cerca sinistro", placeholder="es. S00012", key="cerca_sinistro", on_change=_cerca)
+f4.button("Cancella", on_click=_cancella, width="stretch")
+
+esito = st.session_state.get("esito_ricerca")
+if esito:
+    (st.warning if esito[0] == "warning" else st.info)(esito[1])
+
+# spazio tra i filtri e la tabella: la barra strumenti della tabella non copre "Cancella"
+st.markdown("<div style='height:.75rem'></div>", unsafe_allow_html=True)
 
 df = tabella_alert(p, gestiti)
 df = df[df["Livello"].isin(livelli or [])]
@@ -47,38 +88,30 @@ elif stato == "Gestiti":
     df = df[df["Stato"] == "Gestito"]
 df = df.reset_index(drop=True)
 
-gruppo_da_ricerca = None
-if cerca.strip():
-    codice = cerca.strip().upper()
-    trovato = sinistri[sinistri["id_sinistro"].str.upper() == codice]
-    if trovato.empty:
-        st.warning(f"Sinistro {codice} non trovato.")
-    else:
-        g = trovato.iloc[0]["id_gruppo"]
-        if g in alerts:
-            gruppo_da_ricerca = g
-        else:
-            st.info(f"Sinistro {codice} non collegato a gruppi sospetti.")
 
-ev = st.dataframe(
+def _riga_selezionata() -> None:
+    righe = st.session_state[chiave_tabella].selection.rows
+    if righe and righe[0] < len(df):
+        st.session_state["gruppo_selezionato"] = df.iloc[righe[0]]["Gruppo"]
+
+
+st.dataframe(
     df,
     hide_index=True,
     width="stretch",
-    on_select="rerun",
+    on_select=_riga_selezionata,
     selection_mode="single-row",
+    key=chiave_tabella,
     column_config={"Score di rete": st.column_config.ProgressColumn("Score di rete", min_value=0, max_value=100, format="%d")},
 )
 
-if gruppo_da_ricerca:
-    selezionato = gruppo_da_ricerca
-elif ev.selection.rows:
-    selezionato = df.iloc[ev.selection.rows[0]]["Gruppo"]
-elif st.session_state.get("gruppo_selezionato") in alerts:
-    selezionato = st.session_state["gruppo_selezionato"]
-elif not df.empty:
+selezionato = st.session_state.get("gruppo_selezionato")
+da_ricerca = st.session_state.pop("da_ricerca", False)
+if selezionato not in alerts or (not da_ricerca and selezionato not in set(df["Gruppo"])):
+    # Nessuna scelta valida o gruppo escluso dai filtri: si apre il primo gruppo visibile
+    if df.empty:
+        st.stop()
     selezionato = df.iloc[0]["Gruppo"]
-else:
-    st.stop()
 st.session_state["gruppo_selezionato"] = selezionato
 
 # --- Dettaglio del gruppo ------------------------------------------------

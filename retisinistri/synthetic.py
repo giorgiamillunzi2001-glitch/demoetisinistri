@@ -23,10 +23,41 @@ def _normalize_name(prefix: str, index: int) -> str:
     return f"{prefix}{index}"
 
 
+# Codici neutri condivisi da sinistri regolari e anelli: nessun indizio nei dati.
+N_OFFICINE, N_PERITI, N_AVVOCATI = 40, 80, 70
+OFFICINA_HUB = "OFF_021"  # officina convenzionata molto frequentata (legittima)
+LETTERE = list("ABCDEFGHJKLMNPRSTVWXYZ")
+
+
+def _officina(rng: np.random.Generator) -> str:
+    return f"OFF_{int(rng.integers(1, N_OFFICINE + 1)):03d}"
+
+
+def _perito(rng: np.random.Generator) -> str:
+    return f"PER_{int(rng.integers(1, N_PERITI + 1)):03d}"
+
+
+def _avvocato(rng: np.random.Generator) -> str:
+    return f"AVV_{int(rng.integers(1, N_AVVOCATI + 1)):03d}"
+
+
+def _persona(rng: np.random.Generator) -> str:
+    return f"P{int(rng.integers(100000, 999999)):06d}"
+
+
+def _email(person_id: str) -> str:
+    return f"{person_id.lower()}@mail.it"
+
+
+def _targa(rng: np.random.Generator) -> str:
+    l = lambda: str(rng.choice(LETTERE))  # noqa: E731
+    return f"{l()}{l()}{int(rng.integers(100, 999))}{l()}{l()}"
+
+
 def _generate_regular_claims(n_claims: int, rng: np.random.Generator, base_date: datetime, start_idx: int):
     rows: list[dict] = []
     involvements: list[dict] = []
-    hub_officina = "OFF_000_HUB"
+    hub_officina = OFFICINA_HUB
     for i in range(n_claims):
         claim_id = f"S{start_idx + i:05d}"
         claim_date = base_date + timedelta(days=int(rng.integers(0, 750)))
@@ -36,9 +67,9 @@ def _generate_regular_claims(n_claims: int, rng: np.random.Generator, base_date:
         has_report = bool(rng.random() < 0.45)
         witness = bool(rng.random() < 0.25)
         num_people = int(rng.integers(1, 4))
-        office = hub_officina if rng.random() < 0.15 else f"OFF_{rng.integers(1, 35):04d}"
-        perito = f"PER_{rng.integers(1, 80):05d}"
-        avvocato = f"AVV_{rng.integers(1, 70):05d}"
+        office = hub_officina if rng.random() < 0.15 else _officina(rng)
+        perito = _perito(rng)
+        avvocato = _avvocato(rng)
         row = {
             "id_sinistro": claim_id,
             "data_sinistro": claim_date.date().isoformat(),
@@ -59,33 +90,33 @@ def _generate_regular_claims(n_claims: int, rng: np.random.Generator, base_date:
 
         used_names: set[str] = set()
         for person_idx in range(num_people):
-            person_id = f"P{rng.integers(5000, 19999):06d}"
+            person_id = _persona(rng)
             while person_id in used_names:
-                person_id = f"P{rng.integers(5000, 19999):06d}"
+                person_id = _persona(rng)
             used_names.add(person_id)
             ruolo = "assicurato" if person_idx == 0 else ("controparte" if person_idx == 1 else "testimone" if witness and person_idx == 2 else "conducente")
             phone = _safe_phone(rng)
-            email = f"{person_id.lower()}@mail.it"
+            email = _email(person_id)
             involvement = {
                 "id_sinistro": claim_id,
                 "id_persona": person_id,
                 "ruolo": ruolo,
                 "telefono": phone,
                 "email": email,
-                "targa": f"AB{rng.integers(100, 999):03d}{rng.choice(['A', 'B', 'C', 'D'])}",
+                "targa": _targa(rng),
                 "iban": row["iban_liquidazione"],
             }
             involvements.append(involvement)
 
         if witness:
-            witness_id = f"P{rng.integers(5000, 19999):06d}"
+            witness_id = _persona(rng)
             involvements.append(
                 {
                     "id_sinistro": claim_id,
                     "id_persona": witness_id,
                     "ruolo": "testimone",
                     "telefono": _safe_phone(rng),
-                    "email": f"{witness_id.lower()}@mail.it",
+                    "email": _email(witness_id),
                     "targa": None,
                     "iban": None,
                 }
@@ -100,8 +131,15 @@ def _generate_fraud_ring(ring_index: int, rng: np.random.Generator, base_date: d
     claim_count = int(rng.integers(8, 15))
     shared_phones = [_safe_phone(rng) for _ in range(int(rng.integers(1, 3)))]
     shared_ibans = [_safe_iban(rng) for _ in range(int(rng.integers(1, 3)))]
-    same_shop = f"OFF_{ring_index:03d}_FRAUD"
-    same_lawyer = f"AVV_{ring_index:03d}_FRAUD"
+    same_shop = _officina(rng)
+    same_lawyer = _avvocato(rng)
+    same_perito = _perito(rng)
+    ring_people = []
+    while len(ring_people) < people_count:
+        candidate = _persona(rng)
+        if candidate not in ring_people:
+            ring_people.append(candidate)
+    ring_cars = {person: _targa(rng) for person in ring_people}
     for i in range(claim_count):
         claim_id = f"S{start_idx + i:05d}"
         days_offset = int(rng.integers(0, 180))
@@ -119,18 +157,17 @@ def _generate_fraud_ring(ring_index: int, rng: np.random.Generator, base_date: d
             "cai_firmato_entrambi": bool(rng.random() < 0.6),
             "giorni_da_inizio_polizza": int(rng.integers(5, 220)),
             "id_officina": same_shop,
-            "id_perito": f"PER_{ring_index:03d}",
+            "id_perito": same_perito,
             "id_avvocato": same_lawyer,
             "iban_liquidazione": shared_ibans[i % len(shared_ibans)],
             "label_frode": 1,
         }
         ring_claims.append(row)
 
-        selected_people = [f"P{ring_index:03d}_{person_idx:02d}" for person_idx in range(1, people_count + 1)]
-        for person_idx, person_key in enumerate(selected_people):
+        for person_idx, person_key in enumerate(ring_people):
             ruolo = ["assicurato", "controparte", "conducente", "testimone", "assicurato", "controparte"][person_idx % 6]
             phone = shared_phones[(person_idx + i) % len(shared_phones)]
-            email = f"{person_key.lower()}@fraud.it"
+            email = _email(person_key)
             involvements.append(
                 {
                     "id_sinistro": claim_id,
@@ -138,7 +175,7 @@ def _generate_fraud_ring(ring_index: int, rng: np.random.Generator, base_date: d
                     "ruolo": ruolo,
                     "telefono": phone,
                     "email": email,
-                    "targa": f"FR{ring_index:03d}{i:02d}{person_idx:02d}",
+                    "targa": ring_cars[person_key],
                     "iban": row["iban_liquidazione"],
                 }
             )
@@ -173,6 +210,13 @@ def genera_dataset(n_sinistri: int = 2000, n_anelli: int = 4, seed: int = 42) ->
 
     sinistri_df = pd.DataFrame(sinistri)
     coinvolgimenti_df = pd.DataFrame(coinvolgimenti)
+
+    # Mescola le righe e riassegna gli id: i sinistri fraudolenti non sono più in blocco all'inizio
+    sinistri_df = sinistri_df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    nuovi_id = {old: f"S{idx + 1:05d}" for idx, old in enumerate(sinistri_df["id_sinistro"])}
+    sinistri_df["id_sinistro"] = sinistri_df["id_sinistro"].map(nuovi_id)
+    coinvolgimenti_df["id_sinistro"] = coinvolgimenti_df["id_sinistro"].map(nuovi_id)
+    coinvolgimenti_df = coinvolgimenti_df.sort_values("id_sinistro", kind="stable").reset_index(drop=True)
     sinistri_df = sinistri_df[[
         "id_sinistro",
         "data_sinistro",

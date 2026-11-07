@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from common import GRIGIO, SERIE, percentuale, pipeline
+from common import NEUTRO, PRINCIPALE, RISCHIO, percentuale, pipeline
 from retisinistri.metrics import matrice_confusione, metriche_kpi
 from retisinistri.score_pratica import aggiungi_score_pratica
 
@@ -59,10 +59,10 @@ def render() -> None:
         v_asis = [k_asis["recall"], k_asis["precision"], k_asis["FPR"]]
         v_tobe = [k_tobe["recall"], k_tobe["precision"], k_tobe["FPR"]]
         fig = go.Figure([
-            go.Bar(name="Regole attuali", x=metriche, y=v_asis, marker_color=GRIGIO,
+            go.Bar(name="Regole attuali", x=metriche, y=v_asis, marker_color=NEUTRO,
                    text=[percentuale(v) for v in v_asis], textposition="outside",
                    hovertemplate="%{x}: %{y:.1%}<extra>Regole attuali</extra>"),
-            go.Bar(name="Score di rete", x=metriche, y=v_tobe, marker_color=SERIE[0],
+            go.Bar(name="Score di rete", x=metriche, y=v_tobe, marker_color=PRINCIPALE,
                    text=[percentuale(v) for v in v_tobe], textposition="outside",
                    hovertemplate="%{x}: %{y:.1%}<extra>Score di rete</extra>"),
         ])
@@ -73,11 +73,10 @@ def render() -> None:
         st.plotly_chart(fig, width="stretch")
     with dx:
         st.markdown("**Matrice di confusione**")
-        st.dataframe(pd.DataFrame({
-            "": ["Frodi intercettate (TP)", "Frodi mancate (FN)", "Falsi allarmi (FP)", "Regolari non segnalati (TN)"],
+        st.table(pd.DataFrame({
             "Regole attuali": [cm_asis["TP"], cm_asis["FN"], cm_asis["FP"], cm_asis["TN"]],
             "Score di rete": [cm_tobe["TP"], cm_tobe["FN"], cm_tobe["FP"], cm_tobe["TN"]],
-        }), hide_index=True, width="stretch")
+        }, index=["Frodi intercettate (TP)", "Frodi mancate (FN)", "Falsi allarmi (FP)", "Regolari non segnalati (TN)"]))
         st.caption(f"{len(sinistri)} sinistri, di cui {int(y.sum())} fraudolenti.")
 
     st.markdown("**Stress test della soglia di rete**")
@@ -89,10 +88,10 @@ def render() -> None:
         righe.append({"Soglia": s, "Recall": k["recall"], "Precisione": k["precision"], "FPR": k["FPR"], "Alert": int(pr.sum())})
     st_df = pd.DataFrame(righe)
     fig2 = go.Figure()
-    for nome, col in (("Recall", SERIE[0]), ("Precisione", SERIE[1]), ("FPR", SERIE[2])):
-        fig2.add_trace(go.Scatter(x=st_df["Soglia"], y=st_df[nome], name=nome, mode="lines", line=dict(width=2, color=col),
+    for nome, col, tratto in (("Recall", PRINCIPALE, "solid"), ("Precisione", NEUTRO, "dash"), ("FPR", RISCHIO, "solid")):
+        fig2.add_trace(go.Scatter(x=st_df["Soglia"], y=st_df[nome], name=nome, mode="lines", line=dict(width=2, color=col, dash=tratto),
                                   hovertemplate=f"{nome}: %{{y:.1%}}<extra></extra>"))
-    fig2.add_vline(x=soglia_rete, line_dash="dot", line_color=GRIGIO, annotation_text="soglia attuale")
+    fig2.add_vline(x=soglia_rete, line_dash="dot", line_color=NEUTRO, annotation_text="soglia attuale")
     fig2.update_layout(height=320, hovermode="x unified", yaxis=dict(tickformat=".0%", gridcolor="rgba(0,0,0,.06)"),
                        xaxis_title="Soglia score di rete", legend=dict(orientation="h", y=1.12), **LAYOUT)
     st.plotly_chart(fig2, width="stretch")
