@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -87,12 +88,17 @@ def ricarica_pipeline() -> None:
 
 
 def salva_soglie(soglia_media: int, soglia_alta: int, soglia_regole: int) -> None:
-    with DEFAULT_CONFIG_PATH.open("r", encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
-    raw.setdefault("scoring", {}).update(soglia_media=int(soglia_media), soglia_alta=int(soglia_alta))
-    raw.setdefault("asis", {})["threshold"] = int(soglia_regole)
-    with DEFAULT_CONFIG_PATH.open("w", encoding="utf-8") as fh:
-        yaml.safe_dump(raw, fh, allow_unicode=True, sort_keys=False)
+    """Aggiorna le soglie in config.yaml riga per riga, così i commenti del file restano."""
+    testo = DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
+    for chiave, valore in (("soglia_media", soglia_media), ("soglia_alta", soglia_alta), ("threshold", soglia_regole)):
+        testo, n = re.subn(rf"^(\s*{chiave}:\s*)\S+", rf"\g<1>{int(valore)}", testo, count=1, flags=re.MULTILINE)
+        if n == 0:  # chiave assente: si ricade sulla riscrittura completa
+            raw = yaml.safe_load(testo) or {}
+            raw.setdefault("scoring", {}).update(soglia_media=int(soglia_media), soglia_alta=int(soglia_alta))
+            raw.setdefault("asis", {})["threshold"] = int(soglia_regole)
+            testo = yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
+            break
+    DEFAULT_CONFIG_PATH.write_text(testo, encoding="utf-8")
     ricarica_pipeline()
 
 
@@ -158,7 +164,7 @@ def codici_gruppo(p: dict[str, Any]) -> dict[str, str]:
     """id tecnico della community -> codice leggibile "RETE-01", "RETE-02"…
 
     Assegnati in ordine di score di rete decrescente (a parità: più sinistri, poi id tecnico),
-    così gli alert più urgenti hanno i numeri più bassi.
+    così le segnalazioni più urgenti hanno i numeri più bassi.
     """
     fdf = p["feature_df"].assign(_id=p["feature_df"]["id_gruppo"].astype(str))
     fdf = fdf[fdf["_id"] != "-1"]
@@ -174,7 +180,7 @@ def codice_gruppo(p: dict[str, Any], id_gruppo: Any) -> str:
 # --- Tabelle ---------------------------------------------------------------
 
 def tabella_alert(p: dict[str, Any], gestiti: set[str] | None = None) -> pd.DataFrame:
-    """Tabella degli alert. La colonna "id" (tecnica) va nascosta con COLONNA_ID_NASCOSTA."""
+    """Tabella delle segnalazioni. La colonna "id" (tecnica) va nascosta con COLONNA_ID_NASCOSTA."""
     gestiti = gestiti or set()
     codici = codici_gruppo(p)
     righe = []

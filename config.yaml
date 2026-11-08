@@ -9,6 +9,9 @@ asis:
 scoring:
   soglia_media: 40
   soglia_alta: 70
+  # Quota attesa di gruppi fraudolenti tra i gruppi collegati reali: serve per la stima secondaria
+  # "probabilita' stimata con prevalenza attesa" (lo score di rete resta la probabilita' calibrata)
+  prevalenza_attesa: 0.05
 business:
   premi_rc_auto: 239300000
   loss_ratio: 0.75

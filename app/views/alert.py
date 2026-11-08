@@ -28,7 +28,7 @@ p = pipeline()
 alerts = {a["id_gruppo"]: a for a in p["alerts"]}
 sinistri = p["sinistri"]
 
-st.title("Alert")
+st.title("Segnalazioni")
 
 if not str(p.get("metodo_score", "")).startswith("cross_validation"):
     st.warning(
@@ -38,7 +38,7 @@ if not str(p.get("metodo_score", "")).startswith("cross_validation"):
     )
 
 if not alerts:
-    st.write("Nessun alert aperto.")
+    st.write("Nessuna segnalazione aperta.")
     st.stop()
 
 # --- Filtri ---------------------------------------------------------------
@@ -238,6 +238,8 @@ with st.expander("Indicatori tecnici"):
     ind = pd.DataFrame(
         [
             ("ID tecnico del gruppo (community detection)", str(selezionato)),
+            (f"Probabilità stimata con prevalenza attesa del {percentuale(p.get('prevalenza_attesa', 0.05))}",
+             percentuale(a.get("prob_frode", 0.0), 1)),
             ("Finestra temporale", f"{int(f['finestra_giorni'])} giorni"),
             ("Persone coinvolte", str(int(f["n_persone"]))),
             ("IBAN distinti", str(int(f.get("iban_distinti", 0)))),

@@ -14,7 +14,15 @@ from .config import load_config
 from .features import calcola_feature_gruppo
 from .graph_builder import costruisci_grafo, proietta_sinistri
 from .metrics import business_case, stress_test
-from .models import FEATURE_CHAMPION, contributi, fit_challenger, fit_champion, salva_coefficienti
+from .models import (
+    FEATURE_CHAMPION,
+    contributi,
+    correggi_prevalenza,
+    fit_calibrato,
+    fit_challenger,
+    fit_champion,
+    salva_coefficienti,
+)
 from .score_pratica import aggiungi_score_pratica
 from .scoring import assegna_fascia, motivazioni
 from .synthetic import genera_dataset
@@ -27,23 +35,32 @@ def _root_path(value: str | Path) -> Path:
     return path if path.is_absolute() else ROOT / path
 
 
-def _score_fuori_campione(champion, X: pd.DataFrame, y: pd.Series) -> tuple[np.ndarray, str]:
-    """Score di ogni gruppo calcolato da un modello addestrato SENZA quel gruppo.
+SCORE_MASSIMO = 99  # lo score mostrato non arriva mai a 100: è una stima, non una certezza
 
-    Cross-validation stratificata (fino a 5 fold). In ogni fold il champion viene riaddestrato da
-    capo, compresa la scelta del C di regolarizzazione: nessuna informazione del gruppo valutato
-    entra nel suo score. Se ci sono meno di 2 gruppi per classe non è possibile: si ripiega sullo
-    score del modello completo e il metodo restituito è "in_sample" (l'app mostra un avviso).
+
+def _score_fuori_campione(
+    champion, X: pd.DataFrame, y: pd.Series, prevalenza_attesa: float, prevalenza_fallback: float
+) -> tuple[np.ndarray, np.ndarray, str]:
+    """Probabilità di frode di ogni gruppo, calcolata da un modello addestrato SENZA quel gruppo.
+
+    Cross-validation stratificata (fino a 5 fold). In ogni fold si riaddestrano da capo la logistica
+    (con scelta del C) e la calibrazione sigmoid; poi la probabilità calibrata viene riportata dalla
+    prevalenza del fold di training alla prevalenza attesa. Restituisce (probabilità calibrate,
+    probabilità corrette per la prevalenza, metodo). Con meno di 2 gruppi per classe non è possibile:
+    si usa il modello completo e il metodo è "in_sample" (l'app mostra un avviso).
     """
     min_classe = int(y.value_counts().min()) if y.nunique() == 2 else 0
     if min_classe < 2:
-        return champion.predict_proba(X)[:, 1], "in_sample"
+        p_cal = champion.predict_proba(X)[:, 1]
+        return p_cal, correggi_prevalenza(p_cal, prevalenza_fallback, prevalenza_attesa), "in_sample"
     cv = StratifiedKFold(n_splits=min(5, min_classe), shuffle=True, random_state=42)
-    probs = np.zeros(len(X))
+    p_cal = np.zeros(len(X))
+    p_corr = np.zeros(len(X))
     for train, test in cv.split(X, y):
-        modello_fold, _ = fit_champion(X.iloc[train], y.iloc[train])
-        probs[test] = modello_fold.predict_proba(X.iloc[test])[:, 1]
-    return probs, f"cross_validation_{cv.get_n_splits()}_fold"
+        modello_fold, _ = fit_calibrato(X.iloc[train], y.iloc[train])
+        p_cal[test] = modello_fold.predict_proba(X.iloc[test])[:, 1]
+        p_corr[test] = correggi_prevalenza(p_cal[test], float(y.iloc[train].mean()), prevalenza_attesa)
+    return p_cal, p_corr, f"cross_validation_{cv.get_n_splits()}_fold"
 
 
 def esegui_pipeline(config: dict | None = None) -> dict:
@@ -99,8 +116,13 @@ def esegui_pipeline(config: dict | None = None) -> dict:
         y_train = pd.concat([y, pd.Series([0 if y.iloc[0] == 1 else 1])], ignore_index=True)
     champion, coefs = fit_champion(X_train, y_train)
     challenger = fit_challenger(X_train, y_train)
-    probs, metodo = _score_fuori_campione(champion, X, y)
-    features_df["score_rete"] = [round(100 * p) for p in probs]
+    prevalenza_attesa = float(cfg.get("scoring", {}).get("prevalenza_attesa", 0.05))
+    p_cal, p_corr, metodo = _score_fuori_campione(champion, X, y, prevalenza_attesa, float(y_train.mean()))
+    features_df["prob_calibrata"] = p_cal
+    features_df["prob_frode"] = p_corr
+    # Score di rete = probabilità calibrata fuori campione (scala del campione), limitata a 99.
+    # La probabilità corretta per la prevalenza attesa resta come stima secondaria ("prob_frode").
+    features_df["score_rete"] = [min(SCORE_MASSIMO, int(round(100 * p))) for p in p_cal]
     features_df["fascia"] = features_df["score_rete"].apply(lambda score: assegna_fascia(score, cfg.get("scoring", {}).get("soglia_media", 40), cfg.get("scoring", {}).get("soglia_alta", 70)))
 
     # Score di rete a livello di singolo sinistro (eredita quello del gruppo)
@@ -109,7 +131,8 @@ def esegui_pipeline(config: dict | None = None) -> dict:
     sinistri["score_rete"] = sinistri["id_gruppo"].map(lambda g: score_by_group.get(g, 0))
     sinistri["fascia"] = sinistri["score_rete"].apply(lambda score: assegna_fascia(score, cfg.get("scoring", {}).get("soglia_media", 40), cfg.get("scoring", {}).get("soglia_alta", 70)))
 
-    colonne_feature = [c for c in features_df.columns if c not in {"id_gruppo", "label_frode", "score_rete", "fascia"}]
+    colonne_feature = [c for c in features_df.columns
+                       if c not in {"id_gruppo", "label_frode", "score_rete", "fascia", "prob_calibrata", "prob_frode"}]
     alerts = []
     for _, row in features_df.iterrows():
         if row["fascia"] in {"media", "alta"}:
@@ -123,6 +146,7 @@ def esegui_pipeline(config: dict | None = None) -> dict:
                 "reason_codes": reasons,
                 "feature_gruppo": feature_values,
                 "anomaly_score": float(row.get("anomaly_score", 0.0)),
+                "prob_frode": float(row.get("prob_frode", 0.0)),
                 "label_frode": int(row.get("label_frode", 0)),
                 "persone": [],
             }
@@ -140,6 +164,7 @@ def esegui_pipeline(config: dict | None = None) -> dict:
         "model_cols": model_cols,
         "metodo_score": metodo,
         "C_champion": getattr(champion, "C_scelto", None),
+        "prevalenza_attesa": prevalenza_attesa,
         "sinistri": sinistri,
         "coinvolgimenti": coinvolgimenti,
         "communities": community_map,

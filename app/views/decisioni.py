@@ -23,7 +23,7 @@ def render() -> None:
     override = ultime[ultime["id_gruppo"].isin(alerts) & ultime["decisione"].isin(["liquidazione", "archiviazione"])]
     c = st.columns(4)
     c[0].metric("Decisioni registrate", len(storico))
-    c[1].metric("Alert gestiti", f"{int(ultime['id_gruppo'].isin(alerts).sum())} su {len(alerts)}")
+    c[1].metric("Segnalazioni gestite", f"{int(ultime['id_gruppo'].isin(alerts).sum())} su {len(alerts)}")
     c[2].metric("Frodi confermate", int((ultime["esito_finale"] == "frode_confermata").sum()))
     c[3].metric("Override del modello", percentuale(len(override) / max(1, len(ultime))),
                 help="Gruppi segnalati che il liquidatore ha archiviato o liquidato")

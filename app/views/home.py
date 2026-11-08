@@ -29,14 +29,14 @@ st.markdown(
 importo_rischio = sum(a["feature_gruppo"].get("importo_totale", 0) for a in alerts)
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Sinistri analizzati", f"{len(p['sinistri']):,}".replace(",", "."))
-c2.metric("Alert aperti", len(alerts))
-c3.metric("Importo a rischio", euro(importo_rischio), help="Somma degli importi richiesti nei gruppi in alert")
+c2.metric("Segnalazioni aperte", len(alerts))
+c3.metric("Importo a rischio", euro(importo_rischio), help="Somma degli importi richiesti nei gruppi segnalati")
 c4.metric("Da lavorare", len([a for a in alerts if a["id_gruppo"] not in gestiti]))
 
-st.subheader("Alert prioritari")
+st.subheader("Segnalazioni prioritarie")
 df = tabella_alert(p, gestiti).head(5)
 if df.empty:
-    st.write("Nessun alert aperto.")
+    st.write("Nessuna segnalazione aperta.")
 else:
     ev = st.dataframe(
         df.drop(columns=["Persone"]),

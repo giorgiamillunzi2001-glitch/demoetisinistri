@@ -15,7 +15,7 @@ setup_page_style()
 nav = st.navigation(
     [
         st.Page("views/home.py", title="Panoramica", icon=":material/dashboard:", default=True),
-        st.Page("views/alert.py", title="Alert", icon=":material/report:"),
+        st.Page("views/alert.py", title="Segnalazioni", icon=":material/report:", url_path="segnalazioni"),
         st.Page("views/valuta.py", title="Nuova denuncia", icon=":material/add_circle:"),
         st.Page("views/analisi.py", title="Analisi", icon=":material/insights:"),
     ]
@@ -28,7 +28,7 @@ st.session_state.setdefault("id_liquidatore", "LQ-001")
 with st.sidebar:
     st.markdown("**RetiSinistri**")
     st.text_input("ID liquidatore", key="id_liquidatore")
-    st.metric("Alert aperti", len(p["alerts"]))
+    st.metric("Segnalazioni aperte", len(p["alerts"]))
 
     with st.expander("Impostazioni"):
         with st.form("soglie", border=False):

@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from common import NEUTRO, codici_gruppo, RISCHIO, numero, percentuale, pipeline, ricarica_pipeline
+from common import NEUTRO, PRINCIPALE, RISCHIO, codici_gruppo, numero, percentuale, pipeline, ricarica_pipeline
 from retisinistri.decisions import monitoraggio
 from retisinistri.models import FORBIDDEN_FEATURES
 from retisinistri.synthetic import genera_dataset
@@ -22,6 +22,55 @@ NOMI = {
     "importo_totale": "Importo totale", "score_pratica_medio": "Punteggio regole attuali medio",
     "anomaly_score": "Anomaly score",
 }
+
+
+def _calibrazione(fdf: pd.DataFrame, p: dict) -> None:
+    """Reliability diagram (probabilità calibrate fuori campione) e distribuzione degli score."""
+    if "prob_calibrata" not in fdf.columns or fdf["label_frode"].nunique() < 2:
+        return
+    st.subheader("Calibrazione")
+    c1, c2 = st.columns(2, gap="large")
+
+    with c1:
+        bins = np.linspace(0, 1, 6)
+        fasce = pd.cut(fdf["prob_calibrata"], bins, include_lowest=True)
+        tab = fdf.groupby(fasce, observed=True).agg(
+            prevista=("prob_calibrata", "mean"), osservata=("label_frode", "mean"), gruppi=("label_frode", "size")
+        ).reset_index(drop=True)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", line=dict(color=NEUTRO, dash="dash", width=1),
+                                 name="Calibrazione perfetta", hoverinfo="skip"))
+        fig.add_trace(go.Scatter(
+            x=tab["prevista"], y=tab["osservata"], mode="lines+markers", name="Modello",
+            line=dict(color=PRINCIPALE, width=2), marker=dict(size=8 + 2 * tab["gruppi"], color=PRINCIPALE),
+            customdata=tab["gruppi"],
+            hovertemplate="Probabilità prevista %{x:.0%}<br>Frodi osservate %{y:.0%}<br>Gruppi: %{customdata}<extra></extra>",
+        ))
+        fig.update_layout(height=340, margin=dict(t=10, b=10),
+                          xaxis=dict(title="Probabilità prevista (calibrata)", tickformat=".0%", range=[0, 1], gridcolor="rgba(0,0,0,.06)"),
+                          yaxis=dict(title="Quota di frodi osservata", tickformat=".0%", range=[0, 1.02], gridcolor="rgba(0,0,0,.06)"),
+                          legend=dict(orientation="h", y=1.08), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        st.caption(f"Probabilità calibrate fuori campione (sono lo score di rete). "
+                   f"{len(fdf)} gruppi in 5 fasce: con così pochi gruppi la curva è indicativa.")
+
+    with c2:
+        fig2 = go.Figure()
+        for etichetta, valore, colore in (("Gruppi legittimi", 0, NEUTRO), ("Frodi", 1, RISCHIO)):
+            sotto = fdf[fdf["label_frode"] == valore]["score_rete"]
+            fig2.add_trace(go.Histogram(x=sotto, name=etichetta, marker_color=colore, xbins=dict(start=0, end=100, size=10),
+                                        hovertemplate="Score %{x}<br>Gruppi: %{y}<extra>" + etichetta + "</extra>"))
+        cfg = p["config"].get("scoring", {})
+        for soglia, nome in ((cfg.get("soglia_media", 40), "medio"), (cfg.get("soglia_alta", 70), "alto")):
+            fig2.add_vline(x=soglia, line_dash="dot", line_color=PRINCIPALE, annotation_text=f"livello {nome}")
+        fig2.update_layout(barmode="overlay", height=340, margin=dict(t=10, b=10),
+                           xaxis=dict(title="Score di rete", range=[0, 100]), yaxis=dict(title="Gruppi", gridcolor="rgba(0,0,0,.06)"),
+                           legend=dict(orientation="h", y=1.08), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+        fig2.update_traces(opacity=0.85)
+        st.plotly_chart(fig2, width="stretch", config={"displayModeBar": False})
+        st.caption("Distribuzione degli score di rete: probabilità calibrata fuori campione, massimo 99. "
+                   f"La stima corretta per la prevalenza attesa ({percentuale(p.get('prevalenza_attesa', 0.05))}) "
+                   "è nella tabella Champion vs challenger e negli indicatori tecnici di ogni segnalazione.")
 
 
 def render() -> None:
@@ -63,16 +112,19 @@ def render() -> None:
     X = fdf[cols].fillna(0)
     conf = pd.DataFrame({
         "Gruppo": fdf["id_gruppo"].astype(str).map(codici_gruppo(p)), "Sinistri": fdf["n_sinistri"].astype(int),
-        "Champion (logistica)": fdf["score_rete"].astype(int),  # score fuori campione, quello usato negli alert
+        "Champion (logistica)": fdf["score_rete"].astype(int),  # score fuori campione, quello usato nelle segnalazioni
         "Challenger (gradient boosting)": np.round(p["challenger"].predict_proba(X)[:, 1] * 100).astype(int),
+        f"Prob. con prevalenza {percentuale(p.get('prevalenza_attesa', 0.05))}": (fdf["prob_frode"] * 100).round(1),
         "Etichetta reale": fdf["label_frode"].map({1: "frode", 0: "regolare"}),
     })
     conf["Differenza"] = conf["Challenger (gradient boosting)"] - conf["Champion (logistica)"]
     st.dataframe(conf.sort_values("Gruppo"), hide_index=True, width="stretch",
                  column_config={c: st.column_config.ProgressColumn(c, min_value=0, max_value=100, format="%d")
                                 for c in ["Champion (logistica)", "Challenger (gradient boosting)"]})
-    st.caption("Champion: score fuori campione (quello usato negli alert). Challenger: gira in shadow mode, "
-               "addestrato su tutti i gruppi, produce score solo per confronto e non genera alert.")
+    st.caption("Champion: score fuori campione (quello usato nelle segnalazioni). Challenger: gira in shadow mode, "
+               "addestrato su tutti i gruppi, produce score solo per confronto e non genera segnalazioni.")
+
+    _calibrazione(fdf, p)
 
     st.subheader("Governance")
     mon = monitoraggio()

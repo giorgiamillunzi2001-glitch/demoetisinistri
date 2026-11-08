@@ -46,11 +46,11 @@ def render() -> None:
     m[0].metric("Recall", percentuale(k_tobe["recall"]), _pp(k_tobe["recall"] - k_asis["recall"]),
                 help="Quota di frodi intercettate")
     m[1].metric("Precisione", percentuale(k_tobe["precision"]), _pp(k_tobe["precision"] - k_asis["precision"]),
-                help="Quota di alert che sono frodi")
+                help="Quota di segnalazioni che sono frodi")
     m[2].metric("FPR", percentuale(k_tobe["FPR"], 1), _pp(k_tobe["FPR"] - k_asis["FPR"], 1), delta_color="inverse",
                 help="Quota di sinistri regolari segnalati per errore")
     m[3].metric("STP", percentuale(stp_tobe), _pp(stp_tobe - stp_asis),
-                help="Straight-through processing: pratiche liquidabili senza alert")
+                help="Straight-through processing: pratiche liquidabili senza segnalazione")
     st.caption("Variazioni rispetto alle regole attuali.")
 
     sx, dx = st.columns([3, 2], gap="large")
@@ -85,7 +85,7 @@ def render() -> None:
         pr = (sinistri["score_rete"] >= s).astype(int)
         pr = (pred_asis | pr) if combina else pr
         k = metriche_kpi(y, pr)
-        righe.append({"Soglia": s, "Recall": k["recall"], "Precisione": k["precision"], "FPR": k["FPR"], "Alert": int(pr.sum())})
+        righe.append({"Soglia": s, "Recall": k["recall"], "Precisione": k["precision"], "FPR": k["FPR"], "Segnalazioni": int(pr.sum())})
     st_df = pd.DataFrame(righe)
     fig2 = go.Figure()
     for nome, col, tratto in (("Recall", PRINCIPALE, "solid"), ("Precisione", NEUTRO, "dash"), ("FPR", RISCHIO, "solid")):
@@ -115,6 +115,6 @@ def render() -> None:
     r = st.columns(3)
     r[0].metric("Recall con nuovi pesi", percentuale(k_sim["recall"]), _pp(k_sim["recall"] - k_asis["recall"]))
     r[1].metric("Precisione", percentuale(k_sim["precision"]), _pp(k_sim["precision"] - k_asis["precision"]))
-    r[2].metric("Alert generati", int(sim["alert_asis"].sum()), f"{int(sim['alert_asis'].sum() - pred_asis.sum()):+d}", delta_color="off")
+    r[2].metric("Segnalazioni generate", int(sim["alert_asis"].sum()), f"{int(sim['alert_asis'].sum() - pred_asis.sum()):+d}", delta_color="off")
     st.caption("I sinistri di un anello organizzato sembrano regolari presi uno per uno: anche con pesi diversi "
                "le regole sulla singola pratica li intercettano poco.")

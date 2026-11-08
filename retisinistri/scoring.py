@@ -76,19 +76,15 @@ SOGLIA_FINESTRA_GIORNI = 180
 def _frase(feature: str, f: dict[str, Any]) -> str | None:
     """Frase concreta e assoluta per una feature del champion (None se non c'è un fatto da dire)."""
     n = int(f.get("n_sinistri", 0))
-    if feature == "n_sinistri":
-        return f"{n} sinistri collegati dagli stessi dati" if n >= 3 else None
-    if feature == "sinistri_per_iban":
-        k = int(f.get("iban_distinti", 0))
-        if not k:
+    if feature in {"n_sinistri", "sinistri_per_iban", "sinistri_per_telefono"}:
+        # Numero di sinistri, IBAN e telefoni descrivono la stessa concentrazione: un'unica frase,
+        # che il controllo dei duplicati in `motivazioni` usa una volta sola.
+        if n < 3:
             return None
-        return f"{n} risarcimenti su 1 solo IBAN" if k == 1 else f"{n} risarcimenti su soli {k} IBAN"
-    if feature == "sinistri_per_telefono":
-        k = int(f.get("telefoni_distinti", 0))
-        if not k:
-            return None
-        return (f"{n} sinistri collegati a 1 solo numero di telefono" if k == 1
-                else f"{n} sinistri collegati a soli {k} numeri di telefono")
+        k_iban, k_tel = int(f.get("iban_distinti", 0)), int(f.get("telefoni_distinti", 0))
+        iban = "1 solo IBAN" if k_iban == 1 else f"{k_iban} IBAN"
+        tel = "1 solo telefono" if k_tel == 1 else f"{k_tel} telefoni"
+        return f"{n} sinistri su {iban} e {tel}"
     if feature == "quota_multi_ruolo":
         m = int(f.get("persone_multi_ruolo", 0))
         if m <= 0:

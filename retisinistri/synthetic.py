@@ -125,17 +125,18 @@ def _generate_regular_claims(n_claims: int, rng: np.random.Generator, base_date:
 
 
 def _generate_fraud_ring(ring_index: int, rng: np.random.Generator, base_date: datetime, start_idx: int):
-    """Anello organizzato: persone che si alternano nei ruoli su molti sinistri ravvicinati.
+    """Anello organizzato: un gruppo di persone ricorrenti su molti sinistri.
 
-    Ogni sinistro coinvolge 2-4 membri, come un sinistro normale: l'anello emerge solo
-    guardando i collegamenti tra sinistri (persone, telefoni e IBAN ricorrenti).
+    Ogni sinistro coinvolge 2-4 membri, come un sinistro normale. I segnali sono volutamente non
+    netti: solo una parte dei membri cambia ruolo, l'anello usa più IBAN e telefoni (alcuni propri)
+    e i sinistri possono essere distribuiti su finestre lunghe.
     """
     ring_claims: list[dict] = []
     involvements: list[dict] = []
     people_count = int(rng.integers(6, 10))
     claim_count = int(rng.integers(5, 15))
-    shared_phones = [_safe_phone(rng) for _ in range(int(rng.integers(1, 3)))]
-    shared_ibans = [_safe_iban(rng) for _ in range(int(rng.integers(1, 3)))]
+    shared_phones = [_safe_phone(rng) for _ in range(int(rng.integers(1, 4)))]
+    shared_ibans = [_safe_iban(rng) for _ in range(int(rng.integers(1, 5)))]
     same_shop = _officina(rng)
     same_lawyer = _avvocato(rng)
     same_perito = _perito(rng)
@@ -144,21 +145,28 @@ def _generate_fraud_ring(ring_index: int, rng: np.random.Generator, base_date: d
         candidate = _persona(rng)
         if candidate not in ring_people:
             ring_people.append(candidate)
-    # circa metà dei membri usa un telefono condiviso, gli altri il proprio
+    # una parte dei membri usa un telefono condiviso, gli altri il proprio
+    quota_tel_condiviso = float(rng.uniform(0.2, 0.6))
     phones = {
-        person: shared_phones[int(rng.integers(0, len(shared_phones)))] if rng.random() < 0.5 else _safe_phone(rng)
+        person: shared_phones[int(rng.integers(0, len(shared_phones)))] if rng.random() < quota_tel_condiviso else _safe_phone(rng)
         for person in ring_people
     }
     cars = {person: _targa(rng) for person in ring_people}
+    # non tutti cambiano ruolo: ogni membro ha un ruolo abituale che mantiene con una certa probabilità
+    ruoli = ["assicurato", "controparte", "conducente", "testimone"]
+    ruolo_abituale = {person: str(rng.choice(ruoli)) for person in ring_people}
+    fedelta_ruolo = float(rng.uniform(0.4, 0.85))
     # anelli più o meno "prudenti": finestra temporale e concentrazione su officina/avvocato variabili
-    finestra = int(rng.integers(120, 420))
-    p_officina = float(rng.uniform(0.45, 0.9))
+    finestra = int(rng.integers(120, 600))
+    p_officina = float(rng.uniform(0.4, 0.9))
+    p_iban_personale = float(rng.uniform(0.0, 0.35))
     start_offset = int(rng.integers(0, 750 - finestra))
     for i in range(claim_count):
         claim_id = f"S{start_idx + i:05d}"
         claim_date = base_date + timedelta(days=start_offset + int(rng.integers(0, finestra)))
         denuncia = claim_date + timedelta(days=int(rng.integers(1, 25)))
         importo = float(rng.uniform(1500, 3500))
+        iban = _safe_iban(rng) if rng.random() < p_iban_personale else shared_ibans[i % len(shared_ibans)]
         row = {
             "id_sinistro": claim_id,
             "data_sinistro": claim_date.date().isoformat(),
@@ -172,17 +180,18 @@ def _generate_fraud_ring(ring_index: int, rng: np.random.Generator, base_date: d
             "id_officina": same_shop if rng.random() < p_officina else _officina(rng),
             "id_perito": same_perito if rng.random() < 0.7 else _perito(rng),
             "id_avvocato": same_lawyer if rng.random() < p_officina else _avvocato(rng),
-            "iban_liquidazione": shared_ibans[i % len(shared_ibans)],
+            "iban_liquidazione": iban,
             "label_frode": 1,
         }
         ring_claims.append(row)
 
         coinvolti = [str(x) for x in rng.choice(ring_people, size=int(rng.integers(2, 5)), replace=False)]
-        for person_idx, person_key in enumerate(coinvolti):
-            if person_idx < 2:
-                ruolo = ["assicurato", "controparte"][person_idx]
-            else:
-                ruolo = str(rng.choice(["conducente", "testimone"]))
+        usati: set[str] = set()
+        for person_key in coinvolti:
+            ruolo = ruolo_abituale[person_key] if rng.random() < fedelta_ruolo else str(rng.choice(ruoli))
+            if ruolo in usati and ruolo in {"assicurato", "controparte"}:
+                ruolo = "conducente"
+            usati.add(ruolo)
             involvements.append(
                 {
                     "id_sinistro": claim_id,
@@ -191,17 +200,24 @@ def _generate_fraud_ring(ring_index: int, rng: np.random.Generator, base_date: d
                     "telefono": phones[person_key],
                     "email": _email(person_key),
                     "targa": cars[person_key] if ruolo != "testimone" else None,
-                    "iban": row["iban_liquidazione"] if ruolo != "testimone" else None,
+                    "iban": iban if ruolo != "testimone" else None,
                 }
             )
     return ring_claims, involvements
 
 
-def _generate_legit_group(kind: str, rng: np.random.Generator, base_date: datetime, start_idx: int):
-    """Gruppo collegato ma legittimo.
+TIPI_LEGITTIMI = ("famiglia", "colleghi", "flotta")
 
-    - famiglia: 2-4 persone con telefono di casa e IBAN comuni, pochi sinistri distribuiti nel tempo;
-    - flotta: azienda con un IBAN unico, un responsabile e più autisti, officina convenzionata frequente.
+
+def _generate_legit_group(kind: str, rng: np.random.Generator, base_date: datetime, start_idx: int):
+    """Gruppo collegato ma legittimo, con casi volutamente ambigui.
+
+    - famiglia: 2-4 persone con telefono di casa e IBAN comuni; i familiari compaiono in più
+      sinistri con ruoli diversi (assicurato, conducente, a volte testimone);
+    - colleghi: persone dello stesso ufficio, ognuna con il proprio IBAN, che si fanno da
+      testimone a vicenda (testimoni ricorrenti occasionali);
+    - flotta: azienda con un IBAN condiviso da tutti i sinistri, un responsabile e più autisti,
+      officina convenzionata frequente, a volte sinistri ravvicinati.
     """
     rows: list[dict] = []
     involvements: list[dict] = []
@@ -210,18 +226,23 @@ def _generate_legit_group(kind: str, rng: np.random.Generator, base_date: dateti
         membri = [_persona(rng) for _ in range(int(rng.integers(2, 5)))]
         telefono_casa = _safe_phone(rng)
         phones = {m: telefono_casa if rng.random() < 0.7 else _safe_phone(rng) for m in membri}
-        claim_count = int(rng.integers(3, 6))
-        responsabile, autisti = None, []
+        claim_count = int(rng.integers(3, 7))
+        finestra = int(rng.integers(300, 750))
+    elif kind == "colleghi":
+        membri = [_persona(rng) for _ in range(int(rng.integers(3, 6)))]
+        phones = {m: _safe_phone(rng) for m in membri}
+        iban_personali = {m: _safe_iban(rng) for m in membri}
+        claim_count = int(rng.integers(3, 7))
+        finestra = int(rng.integers(250, 750))
     else:
         responsabile = _persona(rng)
         autisti = [_persona(rng) for _ in range(int(rng.integers(3, 7)))]
         membri = [responsabile, *autisti]
         phones = {m: _safe_phone(rng) for m in membri}
         claim_count = int(rng.integers(5, 13))
+        finestra = int(rng.integers(150, 750))
     cars = {m: _targa(rng) for m in membri}
-    # le flotte usano spesso l'officina convenzionata e possono avere sinistri ravvicinati
     hub_prob = float(rng.uniform(0.5, 0.85)) if kind == "flotta" else 0.15
-    finestra = int(rng.integers(150, 750)) if kind == "flotta" else 750
     inizio = int(rng.integers(0, 750 - finestra + 1))
 
     for i in range(claim_count):
@@ -229,6 +250,29 @@ def _generate_legit_group(kind: str, rng: np.random.Generator, base_date: dateti
         claim_date = base_date + timedelta(days=inizio + int(rng.integers(0, finestra)))
         denuncia = claim_date + timedelta(days=int(rng.integers(1, 45)))
         importo = float(np.exp(rng.normal(loc=8.0, scale=0.8)))
+
+        if kind == "famiglia":
+            assicurato = str(rng.choice(membri))
+            interni = [(assicurato, "assicurato")]
+            altri = [m for m in membri if m != assicurato]
+            if altri and rng.random() < 0.5:
+                interni.append((str(rng.choice(altri)), "conducente"))
+            elif altri and rng.random() < 0.3:
+                interni.append((str(rng.choice(altri)), "testimone"))
+            iban = group_iban
+        elif kind == "colleghi":
+            assicurato = str(rng.choice(membri))
+            interni = [(assicurato, "assicurato")]
+            altri = [m for m in membri if m != assicurato]
+            if rng.random() < 0.6:
+                interni.append((str(rng.choice(altri)), "testimone"))
+            iban = iban_personali[assicurato]
+        else:
+            interni = [(responsabile, "assicurato"), (str(rng.choice(autisti)), "conducente")]
+            if rng.random() < 0.2:
+                interni.append((str(rng.choice(autisti)), "testimone"))
+            iban = group_iban
+
         rows.append(
             {
                 "id_sinistro": claim_id,
@@ -243,27 +287,24 @@ def _generate_legit_group(kind: str, rng: np.random.Generator, base_date: dateti
                 "id_officina": OFFICINA_HUB if rng.random() < hub_prob else _officina(rng),
                 "id_perito": _perito(rng),
                 "id_avvocato": _avvocato(rng),
-                "iban_liquidazione": group_iban,
+                "iban_liquidazione": iban,
                 "label_frode": 0,
             }
         )
-        if kind == "famiglia":
-            assicurato = str(rng.choice(membri))
-            interni = [(assicurato, "assicurato")]
-            altri = [m for m in membri if m != assicurato]
-            if altri and rng.random() < 0.4:
-                interni.append((str(rng.choice(altri)), "conducente"))
-        else:
-            interni = [(responsabile, "assicurato"), (str(rng.choice(autisti)), "conducente")]
+        visti: set[str] = set()
         for persona, ruolo in interni:
+            if persona in visti:
+                continue
+            visti.add(persona)
             involvements.append(
                 {"id_sinistro": claim_id, "id_persona": persona, "ruolo": ruolo, "telefono": phones[persona],
-                 "email": _email(persona), "targa": cars[persona], "iban": group_iban}
+                 "email": _email(persona), "targa": cars[persona] if ruolo != "testimone" else None,
+                 "iban": iban if ruolo != "testimone" else None}
             )
         controparte = _persona(rng)
         involvements.append(
             {"id_sinistro": claim_id, "id_persona": controparte, "ruolo": "controparte", "telefono": _safe_phone(rng),
-             "email": _email(controparte), "targa": _targa(rng), "iban": group_iban}
+             "email": _email(controparte), "targa": _targa(rng), "iban": iban}
         )
     return rows, involvements
 
@@ -273,7 +314,7 @@ def genera_dataset(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Genera sinistri e coinvolgimenti sintetici.
 
-    Contiene anelli di frode, gruppi collegati legittimi (famiglie e flotte; di default
+    Contiene anelli di frode, gruppi collegati legittimi (famiglie, colleghi e flotte; di default
     tanti quanti gli anelli) e sinistri regolari isolati fino a raggiungere `n_sinistri`.
     """
     rng = np.random.default_rng(seed)
@@ -289,7 +330,7 @@ def genera_dataset(
 
     n_legittimi = n_anelli if n_gruppi_legittimi is None else n_gruppi_legittimi
     for idx in range(n_legittimi):
-        kind = "flotta" if idx % 3 == 2 else "famiglia"
+        kind = TIPI_LEGITTIMI[idx % len(TIPI_LEGITTIMI)]
         claims, rels = _generate_legit_group(kind, rng, base_date, len(sinistri) + 1)
         sinistri.extend(claims)
         coinvolgimenti.extend(rels)
