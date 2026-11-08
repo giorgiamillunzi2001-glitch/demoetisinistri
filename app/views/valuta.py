@@ -5,7 +5,7 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 
-from common import LIVELLO, euro, figura_grafo, maschera, pipeline, sottografo_gruppo, vai_a_gruppo
+from common import LIVELLO, codici_gruppo, euro, figura_grafo, maschera, pipeline, sottografo_gruppo, vai_a_gruppo
 from retisinistri.score_pratica import calcola_score_pratica
 from retisinistri.scoring import assegna_fascia
 
@@ -16,6 +16,7 @@ sinistri = p["sinistri"]
 coinv = p["coinvolgimenti"]
 alerts = {a["id_gruppo"]: a for a in p["alerts"]}
 gruppo_di = sinistri.set_index("id_sinistro")["id_gruppo"]
+codici = codici_gruppo(p)
 soglia_regole = float(cfg.get("asis", {}).get("threshold", 50))
 soglia_media = cfg.get("scoring", {}).get("soglia_media", 40)
 soglia_alta = cfg.get("scoring", {}).get("soglia_alta", 70)
@@ -118,11 +119,11 @@ if inviato:
                     nome = {"iban": "IBAN", "telefono": "telefono", "persona": "persona"}[tipo]
                     collegati.setdefault(v.split(":", 1)[1], []).append(f"{nome} {val if tipo == 'persona' else maschera(val)}")
 
-    gruppi_alert = sorted({gruppo_di[s] for s in collegati} & set(alerts))
+    gruppi_alert = sorted({gruppo_di[s] for s in collegati} & set(alerts), key=lambda g: codici.get(g, g))
     motivi_rete = []
     if gruppi_alert:
         score_rete = max(alerts[g]["score_rete"] for g in gruppi_alert)
-        motivi_rete = [f"collegata al gruppo {g} (score di rete {alerts[g]['score_rete']})" for g in gruppi_alert]
+        motivi_rete = [f"collegata al gruppo {codici[g]} (score di rete {alerts[g]['score_rete']})" for g in gruppi_alert]
     elif collegati:
         score_rete = min(60, 15 * len(collegati))
         motivi_rete = [f"condivide dati con {len(collegati)} sinistri in archivio"]
@@ -138,7 +139,7 @@ if inviato:
         azione = "liquidazione ordinaria"
 
     if gruppi_alert:
-        esito = f"Collegato al gruppo {', '.join(gruppi_alert)} · livello {LIVELLO[fascia]}"
+        esito = f"Collegato al gruppo {', '.join(codici[g] for g in gruppi_alert)} · livello {LIVELLO[fascia]}"
     elif collegati:
         esito = f"Collegato a {len(collegati)} sinistri in archivio · livello {LIVELLO[fascia]}"
     else:
@@ -168,13 +169,13 @@ if inviato:
         st.markdown("**Collegamenti trovati**")
         st.dataframe(
             pd.DataFrame([{"Sinistro": s, "Tramite": ", ".join(sorted(set(v))),
-                           "Gruppo": "" if gruppo_di[s] == "-1" else gruppo_di[s]}
+                           "Gruppo": codici.get(gruppo_di[s], "")}
                           for s, v in collegati.items()]),
             hide_index=True, width="stretch",
         )
         st.plotly_chart(figura_grafo(sottografo_gruppo(p, list(collegati), includi_deboli=False), altezza=400), width="stretch")
         for g in gruppi_alert:
-            if st.button(f"Apri gruppo {g}", key=f"v_open_{g}"):
+            if st.button(f"Apri {codici[g]}", key=f"v_open_{g}"):
                 vai_a_gruppo(g)
 
     st.session_state.setdefault("pratiche_valutate", []).insert(0, {

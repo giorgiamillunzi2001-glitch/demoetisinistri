@@ -6,7 +6,9 @@ import pandas as pd
 import streamlit as st
 
 from common import (
+    COLONNA_ID_NASCOSTA,
     DECISIONI,
+    codice_gruppo,
     data_it,
     data_ora_it,
     etichetta_livello,
@@ -92,7 +94,7 @@ df = df.reset_index(drop=True)
 def _riga_selezionata() -> None:
     righe = st.session_state[chiave_tabella].selection.rows
     if righe and righe[0] < len(df):
-        st.session_state["gruppo_selezionato"] = df.iloc[righe[0]]["Gruppo"]
+        st.session_state["gruppo_selezionato"] = df.iloc[righe[0]]["id"]
 
 
 st.dataframe(
@@ -102,26 +104,28 @@ st.dataframe(
     on_select=_riga_selezionata,
     selection_mode="single-row",
     key=chiave_tabella,
-    column_config={"Score di rete": st.column_config.ProgressColumn("Score di rete", min_value=0, max_value=100, format="%d")},
+    column_config={"Score di rete": st.column_config.ProgressColumn("Score di rete", min_value=0, max_value=100, format="%d"),
+                   **COLONNA_ID_NASCOSTA},
 )
 
 selezionato = st.session_state.get("gruppo_selezionato")
 da_ricerca = st.session_state.pop("da_ricerca", False)
-if selezionato not in alerts or (not da_ricerca and selezionato not in set(df["Gruppo"])):
+if selezionato not in alerts or (not da_ricerca and selezionato not in set(df["id"])):
     # Nessuna scelta valida o gruppo escluso dai filtri: si apre il primo gruppo visibile
     if df.empty:
         st.stop()
-    selezionato = df.iloc[0]["Gruppo"]
+    selezionato = df.iloc[0]["id"]
 st.session_state["gruppo_selezionato"] = selezionato
 
 # --- Dettaglio del gruppo ------------------------------------------------
 a = alerts[selezionato]
 f = a["feature_gruppo"]
+codice = codice_gruppo(p, selezionato)
 ids = sinistri.loc[sinistri["id_gruppo"] == str(selezionato), "id_sinistro"].tolist()
 coinv = p["coinvolgimenti"][p["coinvolgimenti"]["id_sinistro"].isin(ids)]
 
 st.divider()
-st.markdown(f"<h2 style='margin-bottom:0'>Gruppo {selezionato} &nbsp;{etichetta_livello(a['fascia'])}</h2>", unsafe_allow_html=True)
+st.markdown(f"<h2 style='margin-bottom:0'>{codice} &nbsp;{etichetta_livello(a['fascia'])}</h2>", unsafe_allow_html=True)
 st.caption(f"{int(f['n_sinistri'])} sinistri · {int(f['n_persone'])} persone · {euro(f['importo_totale'])}")
 
 m1, m2, m3 = st.columns(3)
@@ -160,7 +164,7 @@ if scelta:
         salva_decisione(f"alert-{selezionato}", str(selezionato), liquidatore, scelta, "in_corso", note)
         st.session_state["ultimo_salvataggio"] = (
             selezionato,
-            f"Decisione registrata: {DECISIONI[scelta]} · {dt.datetime.now():%d/%m/%Y %H:%M} · {liquidatore}",
+            f"Decisione registrata per {codice}: {DECISIONI[scelta]} · {dt.datetime.now():%d/%m/%Y %H:%M} · {liquidatore}",
         )
         st.rerun()
 
@@ -222,6 +226,7 @@ with st.expander("Persone e contatti"):
 with st.expander("Indicatori tecnici"):
     ind = pd.DataFrame(
         [
+            ("ID tecnico del gruppo (community detection)", str(selezionato)),
             ("Finestra temporale", f"{int(f['finestra_giorni'])} giorni"),
             ("Sinistri per IBAN", numero(f["sinistri_per_iban"], 1)),
             ("Sinistri per telefono", numero(f["sinistri_per_telefono"], 1)),

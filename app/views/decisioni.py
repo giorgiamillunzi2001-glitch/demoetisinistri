@@ -4,12 +4,14 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from common import DECISIONI, ESITI, data_ora_it, percentuale, pipeline, vai_a_gruppo
+from common import DECISIONI, ESITI, codici_gruppo, data_ora_it, percentuale, pipeline, vai_a_gruppo
 from retisinistri.decisions import dataset_riaddestramento, lista_decisioni
 
 
 def render() -> None:
-    alerts = {a["id_gruppo"]: a for a in pipeline()["alerts"]}
+    p = pipeline()
+    alerts = {a["id_gruppo"]: a for a in p["alerts"]}
+    codici = codici_gruppo(p)
 
     st.subheader("Storico decisioni")
     storico = pd.DataFrame(lista_decisioni())
@@ -39,7 +41,8 @@ def render() -> None:
         vista = vista[vista["esito_finale"].isin(esi)]
     vista = pd.DataFrame({
         "Data e ora": vista["timestamp"].map(data_ora_it),
-        "Gruppo": vista["id_gruppo"],
+        "id": vista["id_gruppo"],
+        "Gruppo": vista["id_gruppo"].map(lambda g: codici.get(g, "non più attivo")),
         "Score di rete": vista["id_gruppo"].map(lambda g: alerts.get(g, {}).get("score_rete")),
         "Liquidatore": vista["id_liquidatore"],
         "Decisione": vista["decisione"].map(lambda x: DECISIONI.get(x, x)),
@@ -48,12 +51,12 @@ def render() -> None:
     })
 
     ev = st.dataframe(vista, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
-                      key="storico_decisioni")
+                      key="storico_decisioni", column_config={"id": None})
     a, b = st.columns([1, 4])
-    a.download_button("Esporta CSV", vista.to_csv(index=False).encode("utf-8"), "decisioni.csv", "text/csv")
+    a.download_button("Esporta CSV", vista.drop(columns=["id"]).to_csv(index=False).encode("utf-8"), "decisioni.csv", "text/csv")
     if ev.selection.rows:
-        g = vista.iloc[ev.selection.rows[0]]["Gruppo"]
-        if g in alerts and b.button(f"Apri gruppo {g}"):
+        g = vista.iloc[ev.selection.rows[0]]["id"]
+        if g in alerts and b.button(f"Apri {codici[g]}"):
             vai_a_gruppo(g)
 
     st.markdown("**Dataset per il riaddestramento**")
@@ -62,6 +65,6 @@ def render() -> None:
         st.caption("Nessun gruppo con esito definitivo (frode confermata o regolare).")
     else:
         st.dataframe(pd.DataFrame({
-            "Gruppo": ds["id_gruppo"], "Decisione": ds["decisione"].map(lambda x: DECISIONI.get(x, x)),
+            "Gruppo": ds["id_gruppo"].map(lambda g: codici.get(g, "non più attivo")), "Decisione": ds["decisione"].map(lambda x: DECISIONI.get(x, x)),
             "Esito": ds["esito_finale"].map(lambda x: ESITI.get(x, x)), "Note": ds["note"],
         }), hide_index=True, width="stretch")

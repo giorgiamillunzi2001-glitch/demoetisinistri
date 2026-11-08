@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from common import NEUTRO, RISCHIO, numero, percentuale, pipeline, ricarica_pipeline
+from common import NEUTRO, codici_gruppo, RISCHIO, numero, percentuale, pipeline, ricarica_pipeline
 from retisinistri.decisions import monitoraggio
 from retisinistri.models import FORBIDDEN_FEATURES
 from retisinistri.synthetic import genera_dataset
@@ -58,13 +58,13 @@ def render() -> None:
     st.subheader("Champion vs challenger")
     X = fdf[cols].fillna(0)
     conf = pd.DataFrame({
-        "Gruppo": fdf["id_gruppo"].astype(str), "Sinistri": fdf["n_sinistri"].astype(int),
+        "Gruppo": fdf["id_gruppo"].astype(str).map(codici_gruppo(p)), "Sinistri": fdf["n_sinistri"].astype(int),
         "Champion (logistica)": np.round(p["model"].predict_proba(X)[:, 1] * 100).astype(int),
         "Challenger (gradient boosting)": np.round(p["challenger"].predict_proba(X)[:, 1] * 100).astype(int),
         "Etichetta reale": fdf["label_frode"].map({1: "frode", 0: "regolare"}),
     })
     conf["Differenza"] = conf["Challenger (gradient boosting)"] - conf["Champion (logistica)"]
-    st.dataframe(conf, hide_index=True, width="stretch",
+    st.dataframe(conf.sort_values("Gruppo"), hide_index=True, width="stretch",
                  column_config={c: st.column_config.ProgressColumn(c, min_value=0, max_value=100, format="%d")
                                 for c in ["Champion (logistica)", "Challenger (gradient boosting)"]})
     st.caption("Il challenger gira in shadow mode: produce score solo per confronto e non genera alert.")

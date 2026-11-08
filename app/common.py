@@ -152,16 +152,38 @@ def maschera(valore: Any) -> str:
     return testo[:4] + "•••" + testo[-3:]
 
 
+# --- Codici leggibili dei gruppi -------------------------------------------
+
+def codici_gruppo(p: dict[str, Any]) -> dict[str, str]:
+    """id tecnico della community -> codice leggibile "RETE-01", "RETE-02"…
+
+    Assegnati in ordine di score di rete decrescente (a parità: più sinistri, poi id tecnico),
+    così gli alert più urgenti hanno i numeri più bassi.
+    """
+    fdf = p["feature_df"].assign(_id=p["feature_df"]["id_gruppo"].astype(str))
+    fdf = fdf[fdf["_id"] != "-1"]
+    ordinati = fdf.sort_values(["score_rete", "n_sinistri", "_id"], ascending=[False, False, True])["_id"]
+    cifre = max(2, len(str(len(ordinati))))
+    return {g: f"RETE-{i:0{cifre}d}" for i, g in enumerate(ordinati, start=1)}
+
+
+def codice_gruppo(p: dict[str, Any], id_gruppo: Any) -> str:
+    return codici_gruppo(p).get(str(id_gruppo), "")
+
+
 # --- Tabelle ---------------------------------------------------------------
 
 def tabella_alert(p: dict[str, Any], gestiti: set[str] | None = None) -> pd.DataFrame:
+    """Tabella degli alert. La colonna "id" (tecnica) va nascosta con COLONNA_ID_NASCOSTA."""
     gestiti = gestiti or set()
+    codici = codici_gruppo(p)
     righe = []
     for a in p["alerts"]:
         f = a["feature_gruppo"]
         righe.append(
             {
-                "Gruppo": a["id_gruppo"],
+                "id": a["id_gruppo"],
+                "Gruppo": codici.get(a["id_gruppo"], a["id_gruppo"]),
                 "Livello": LIVELLO[a["fascia"]],
                 "Score di rete": a["score_rete"],
                 "Sinistri": int(f.get("n_sinistri", 0)),
@@ -173,8 +195,11 @@ def tabella_alert(p: dict[str, Any], gestiti: set[str] | None = None) -> pd.Data
         )
     df = pd.DataFrame(righe)
     if not df.empty:
-        df = df.sort_values("Score di rete", ascending=False).reset_index(drop=True)
+        df = df.sort_values("Gruppo").reset_index(drop=True)
     return df
+
+
+COLONNA_ID_NASCOSTA = {"id": None}
 
 
 # --- Grafo -----------------------------------------------------------------

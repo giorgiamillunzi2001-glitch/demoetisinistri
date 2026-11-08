@@ -2,7 +2,17 @@ from __future__ import annotations
 
 import streamlit as st
 
-from common import DECISIONI, data_ora_it, euro, oggi_esteso, pipeline, tabella_alert, vai_a_gruppo
+from common import (
+    COLONNA_ID_NASCOSTA,
+    DECISIONI,
+    codice_gruppo,
+    data_ora_it,
+    euro,
+    oggi_esteso,
+    pipeline,
+    tabella_alert,
+    vai_a_gruppo,
+)
 from retisinistri.decisions import lista_decisioni
 
 p = pipeline()
@@ -35,16 +45,16 @@ else:
         on_select="rerun",
         selection_mode="single-row",
         key=f"home_alert_{st.session_state.get('home_alert_ver', 0)}",
-        column_config={"Score di rete": st.column_config.NumberColumn(format="%d")},
+        column_config={"Score di rete": st.column_config.NumberColumn(format="%d"), **COLONNA_ID_NASCOSTA},
     )
     if ev.selection.rows:
         # Nuova chiave alla prossima visita: la tabella torna senza selezione
         st.session_state["home_alert_ver"] = st.session_state.get("home_alert_ver", 0) + 1
-        vai_a_gruppo(df.iloc[ev.selection.rows[0]]["Gruppo"])
+        vai_a_gruppo(df.iloc[ev.selection.rows[0]]["id"])
 
 if decisioni:
     righe = [
-        f"{data_ora_it(d['timestamp'])} · Gruppo {d['id_gruppo']} · {DECISIONI.get(d['decisione'], d['decisione'])} · {d['id_liquidatore']}"
+        f"{data_ora_it(d['timestamp'])} · {codice_gruppo(p, d['id_gruppo']) or 'gruppo non più attivo'} · {DECISIONI.get(d['decisione'], d['decisione'])} · {d['id_liquidatore']}"
         for d in decisioni[:3]
     ]
     st.caption("Ultime decisioni  \n" + "  \n".join(righe))
