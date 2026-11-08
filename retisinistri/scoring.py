@@ -68,3 +68,77 @@ def reason_codes(feature_gruppo: dict[str, Any], coef: dict[str, float], top_n: 
         elif key == "sinistri_per_telefono":
             reasons.append(template.format(n_sinistri=int(feature_gruppo.get("n_sinistri", 0)), n_telefono=int(feature_gruppo.get("n_persone", 1))))
     return reasons[:top_n]
+
+
+SOGLIA_FINESTRA_GIORNI = 180
+
+
+def _frase(feature: str, f: dict[str, Any]) -> str | None:
+    """Frase concreta e assoluta per una feature del champion (None se non c'è un fatto da dire)."""
+    n = int(f.get("n_sinistri", 0))
+    if feature == "n_sinistri":
+        return f"{n} sinistri collegati dagli stessi dati" if n >= 3 else None
+    if feature == "sinistri_per_iban":
+        k = int(f.get("iban_distinti", 0))
+        if not k:
+            return None
+        return f"{n} risarcimenti su 1 solo IBAN" if k == 1 else f"{n} risarcimenti su soli {k} IBAN"
+    if feature == "sinistri_per_telefono":
+        k = int(f.get("telefoni_distinti", 0))
+        if not k:
+            return None
+        return (f"{n} sinistri collegati a 1 solo numero di telefono" if k == 1
+                else f"{n} sinistri collegati a soli {k} numeri di telefono")
+    if feature == "quota_multi_ruolo":
+        m = int(f.get("persone_multi_ruolo", 0))
+        if m <= 0:
+            return None
+        return "1 persona compare con ruoli diversi" if m == 1 else f"{m} persone compaiono con ruoli diversi"
+    if feature == "testimone_ricorrente_max":
+        t = int(f.get("testimone_ricorrente_max", 0))
+        return f"la stessa persona è testimone in {t} sinistri" if t >= 2 else None
+    if feature == "finestra_giorni":
+        g = int(f.get("finestra_giorni", 0))
+        return f"{n} sinistri in {g} giorni" if 0 < g < SOGLIA_FINESTRA_GIORNI else None
+    return None
+
+
+# Verso in cui ogni frase descrive un fatto come sospetto: +1 = "più è alto, più è sospetto"
+# (es. "14 risarcimenti su 1 solo IBAN"), -1 = "più è basso, più è sospetto" ("7 sinistri in 88 giorni").
+VERSO_SOSPETTO = {
+    "n_sinistri": 1,
+    "sinistri_per_iban": 1,
+    "sinistri_per_telefono": 1,
+    "quota_multi_ruolo": 1,
+    "testimone_ricorrente_max": 1,
+    "finestra_giorni": -1,
+}
+
+
+def motivazioni(
+    feature_gruppo: dict[str, Any], contributi: dict[str, float], coefs: dict[str, float] | None = None, n: int = 3
+) -> list[str]:
+    """Fino a `n` frasi concrete, partendo dai segnali con contributo positivo più alto.
+
+    Una frase è ammessa solo se il modello pesa quel segnale nello stesso verso in cui la frase
+    lo presenta come sospetto (es. non si cita "su 1 solo IBAN" se il modello considera gli IBAN
+    condivisi un segnale rassicurante). Se i segnali positivi non bastano, si completa con gli
+    altri fatti ammessi. La finestra temporale compare solo se inferiore a 180 giorni.
+    """
+    coefs = coefs or {}
+
+    def coerente(feature: str) -> bool:
+        beta = coefs.get(feature)
+        return beta is None or beta * VERSO_SOSPETTO.get(feature, 1) > 0
+
+    ordinati = sorted(contributi.items(), key=lambda kv: kv[1], reverse=True)
+    positivi = [k for k, v in ordinati if v > 0 and coerente(k)]
+    altri = [k for k, v in ordinati if v <= 0 and coerente(k)]
+    frasi: list[str] = []
+    for feature in positivi + altri:
+        frase = _frase(feature, feature_gruppo)
+        if frase and frase not in frasi:
+            frasi.append(frase)
+        if len(frasi) == n:
+            break
+    return frasi

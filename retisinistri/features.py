@@ -32,8 +32,9 @@ def calcola_feature_gruppo(gruppo_ids: list[str], sinistri: pd.DataFrame, coinvo
     office_counts = gruppo_sinistri["id_officina"].value_counts()
     avvocato_counts = gruppo_sinistri["id_avvocato"].fillna("NA").value_counts()
 
-    role_counts = gruppo_coinvolgimenti["ruolo"].value_counts()
-    max_witness = int(role_counts.get("testimone", 0))
+    # Numero massimo di sinistri in cui la STESSA persona compare come testimone
+    testimoni = gruppo_coinvolgimenti[gruppo_coinvolgimenti["ruolo"] == "testimone"].dropna(subset=["id_persona"])
+    max_witness = int(testimoni.groupby("id_persona")["id_sinistro"].nunique().max()) if not testimoni.empty else 0
 
     subgraph = G.subgraph([f"sinistro:{sinistro_id}" for sinistro_id in gruppo_ids])
     densita = nx.density(subgraph) if subgraph.number_of_nodes() > 1 else 0.0
@@ -52,6 +53,8 @@ def calcola_feature_gruppo(gruppo_ids: list[str], sinistri: pd.DataFrame, coinvo
         "quota_multi_ruolo": (persone_multi_ruolo / len(persone)) if len(persone) else 0.0,
         "sinistri_per_iban": (len(gruppo_sinistri) / iban_distinti) if iban_distinti else 0.0,
         "sinistri_per_telefono": (len(gruppo_sinistri) / telefoni_distinti) if telefoni_distinti else 0.0,
+        "iban_distinti": int(iban_distinti),
+        "telefoni_distinti": int(telefoni_distinti),
         "quota_officina_top": float((office_counts.max() / len(gruppo_sinistri))) if not office_counts.empty else 0.0,
         "quota_avvocato_top": float((avvocato_counts.max() / len(gruppo_sinistri))) if not avvocato_counts.empty else 0.0,
         "finestra_giorni": finestra,

@@ -6,8 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.base import clone
-from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.model_selection import StratifiedKFold
 
 from .anomaly import calcola_anomaly_score
 from .communities import trova_gruppi
@@ -15,9 +14,9 @@ from .config import load_config
 from .features import calcola_feature_gruppo
 from .graph_builder import costruisci_grafo, proietta_sinistri
 from .metrics import business_case, stress_test
-from .models import fit_challenger, fit_champion, salva_coefficienti
+from .models import FEATURE_CHAMPION, contributi, fit_challenger, fit_champion, salva_coefficienti
 from .score_pratica import aggiungi_score_pratica
-from .scoring import assegna_fascia, reason_codes
+from .scoring import assegna_fascia, motivazioni
 from .synthetic import genera_dataset
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,15 +30,19 @@ def _root_path(value: str | Path) -> Path:
 def _score_fuori_campione(champion, X: pd.DataFrame, y: pd.Series) -> tuple[np.ndarray, str]:
     """Score di ogni gruppo calcolato da un modello addestrato SENZA quel gruppo.
 
-    Usa una cross-validation stratificata (fino a 5 fold): lo score non "ricorda" l'etichetta
-    del gruppo stesso, quindi le metriche di confronto sono oneste. Se ci sono troppo pochi
-    gruppi per classe (meno di 2) si ripiega sullo score in-sample del modello completo.
+    Cross-validation stratificata (fino a 5 fold). In ogni fold il champion viene riaddestrato da
+    capo, compresa la scelta del C di regolarizzazione: nessuna informazione del gruppo valutato
+    entra nel suo score. Se ci sono meno di 2 gruppi per classe non è possibile: si ripiega sullo
+    score del modello completo e il metodo restituito è "in_sample" (l'app mostra un avviso).
     """
     min_classe = int(y.value_counts().min()) if y.nunique() == 2 else 0
     if min_classe < 2:
         return champion.predict_proba(X)[:, 1], "in_sample"
     cv = StratifiedKFold(n_splits=min(5, min_classe), shuffle=True, random_state=42)
-    probs = cross_val_predict(clone(champion), X, y, cv=cv, method="predict_proba")[:, 1]
+    probs = np.zeros(len(X))
+    for train, test in cv.split(X, y):
+        modello_fold, _ = fit_champion(X.iloc[train], y.iloc[train])
+        probs[test] = modello_fold.predict_proba(X.iloc[test])[:, 1]
     return probs, f"cross_validation_{cv.get_n_splits()}_fold"
 
 
@@ -56,7 +59,7 @@ def esegui_pipeline(config: dict | None = None) -> dict:
         sinistri = pd.read_csv(raw_path)
         coinvolgimenti = pd.read_csv(raw_links)
     else:
-        sinistri, coinvolgimenti = genera_dataset(n_sinistri=200, n_anelli=4, seed=42)
+        sinistri, coinvolgimenti = genera_dataset(n_sinistri=600, n_anelli=8, seed=42, n_gruppi_legittimi=8)
 
     sinistri = aggiungi_score_pratica(sinistri, cfg)
 
@@ -76,27 +79,12 @@ def esegui_pipeline(config: dict | None = None) -> dict:
 
     feature_rows = list(groups.values())
     if not feature_rows:
-        feature_rows = [{"id_gruppo": -1, "n_sinistri": 1, "n_persone": 1, "persone_multi_ruolo": 0, "quota_multi_ruolo": 0.0, "sinistri_per_iban": 1.0, "sinistri_per_telefono": 1.0, "quota_officina_top": 0.0, "quota_avvocato_top": 0.0, "finestra_giorni": 0.0, "densita": 0.0, "testimone_ricorrente_max": 0, "importo_totale": 0.0, "score_pratica_medio": 0.0, "label_frode": 0}]
+        feature_rows = [{"id_gruppo": -1, "n_sinistri": 1, "n_persone": 1, "persone_multi_ruolo": 0, "quota_multi_ruolo": 0.0, "sinistri_per_iban": 1.0, "sinistri_per_telefono": 1.0, "iban_distinti": 1, "telefoni_distinti": 1, "quota_officina_top": 0.0, "quota_avvocato_top": 0.0, "finestra_giorni": 0.0, "densita": 0.0, "testimone_ricorrente_max": 0, "importo_totale": 0.0, "score_pratica_medio": 0.0, "label_frode": 0}]
 
     features_df = pd.DataFrame(feature_rows)
     features_df["anomaly_score"] = calcola_anomaly_score(features_df).values
 
-    model_cols = [
-        "n_sinistri",
-        "n_persone",
-        "persone_multi_ruolo",
-        "quota_multi_ruolo",
-        "sinistri_per_iban",
-        "sinistri_per_telefono",
-        "quota_officina_top",
-        "quota_avvocato_top",
-        "finestra_giorni",
-        "densita",
-        "testimone_ricorrente_max",
-        "importo_totale",
-        "score_pratica_medio",
-        "anomaly_score",
-    ]
+    model_cols = list(FEATURE_CHAMPION)
     X = features_df[model_cols].fillna(0)
     y = features_df["label_frode"].astype(int)
     X_train, y_train = X, y
@@ -105,7 +93,8 @@ def esegui_pipeline(config: dict | None = None) -> dict:
         # e, se mancano gruppi regolari, il gruppo stesso fa da riferimento positivo.
         baseline = pd.DataFrame([{col: 0.0 for col in model_cols}])
         baseline["n_sinistri"] = 1.0
-        baseline["n_persone"] = 2.0
+        baseline["sinistri_per_iban"] = 1.0
+        baseline["sinistri_per_telefono"] = 1.0
         X_train = pd.concat([X, baseline], ignore_index=True)
         y_train = pd.concat([y, pd.Series([0 if y.iloc[0] == 1 else 1])], ignore_index=True)
     champion, coefs = fit_champion(X_train, y_train)
@@ -120,11 +109,12 @@ def esegui_pipeline(config: dict | None = None) -> dict:
     sinistri["score_rete"] = sinistri["id_gruppo"].map(lambda g: score_by_group.get(g, 0))
     sinistri["fascia"] = sinistri["score_rete"].apply(lambda score: assegna_fascia(score, cfg.get("scoring", {}).get("soglia_media", 40), cfg.get("scoring", {}).get("soglia_alta", 70)))
 
+    colonne_feature = [c for c in features_df.columns if c not in {"id_gruppo", "label_frode", "score_rete", "fascia"}]
     alerts = []
     for _, row in features_df.iterrows():
         if row["fascia"] in {"media", "alta"}:
-            feature_values = {col: float(row[col]) for col in model_cols if col in row}
-            reasons = reason_codes(feature_values, coefs, top_n=3)
+            feature_values = {col: float(row[col]) for col in colonne_feature if pd.notna(row.get(col))}
+            reasons = motivazioni(feature_values, contributi(champion, feature_values, model_cols), coefs, n=3)
             alert = {
                 "id_gruppo": str(row.get("id_gruppo", "-1")),
                 "score_rete": int(row["score_rete"]),
@@ -149,6 +139,7 @@ def esegui_pipeline(config: dict | None = None) -> dict:
         "coefficienti": coefs,
         "model_cols": model_cols,
         "metodo_score": metodo,
+        "C_champion": getattr(champion, "C_scelto", None),
         "sinistri": sinistri,
         "coinvolgimenti": coinvolgimenti,
         "communities": community_map,

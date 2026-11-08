@@ -218,6 +218,14 @@ def sottografo_gruppo(p: dict[str, Any], sinistri_ids: list[str], includi_deboli
     return G.subgraph(nodi | vicini).copy()
 
 
+def _dimensione_nodo(tipo: str, grado: int) -> int:
+    if tipo == "sinistro":
+        return 13
+    if tipo == "iban" and grado > 1:  # IBAN condiviso da più sinistri: in evidenza
+        return 18 + 2 * min(grado, 8)
+    return 9 + min(grado, 8)
+
+
 def figura_grafo(H: nx.Graph, altezza: int = 460) -> go.Figure:
     """Grafo sinistri-entità: colore e simbolo per tipo, professionisti in grigio."""
     if H.number_of_nodes() == 0:
@@ -253,7 +261,7 @@ def figura_grafo(H: nx.Graph, altezza: int = 460) -> go.Figure:
         traces.append(
             go.Scatter(
                 x=[pos[n][0] for n in nodi], y=[pos[n][1] for n in nodi], mode="markers", name=etichetta,
-                marker=dict(size=[13 if tipo == "sinistro" else 9 + min(H.degree(n), 8) for n in nodi],
+                marker=dict(size=[_dimensione_nodo(tipo, H.degree(n)) for n in nodi],
                             color=colore, symbol=simbolo, line=dict(width=1.5, color="#ffffff")),
                 hovertext=hover, hoverinfo="text",
             )

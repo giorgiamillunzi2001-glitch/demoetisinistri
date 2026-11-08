@@ -30,6 +30,13 @@ sinistri = p["sinistri"]
 
 st.title("Alert")
 
+if not str(p.get("metodo_score", "")).startswith("cross_validation"):
+    st.warning(
+        "Attenzione: gli score di questa analisi non sono calcolati fuori campione. Ci sono troppo pochi "
+        "gruppi confermati per tipo (servono almeno 2 frodi e 2 gruppi regolari), quindi il modello valuta "
+        "anche i gruppi su cui è stato addestrato e gli score possono risultare ottimistici."
+    )
+
 if not alerts:
     st.write("Nessun alert aperto.")
     st.stop()
@@ -131,7 +138,9 @@ st.caption(f"{int(f['n_sinistri'])} sinistri · {int(f['n_persone'])} persone ·
 m1, m2, m3 = st.columns(3)
 m1.metric("Score di rete", f"{a['score_rete']}/100")
 m2.metric("Punteggio regole attuali (media)", f"{a['score_pratica_medio']:.0f}/100")
-m3.metric("Finestra temporale", f"{int(f['finestra_giorni'])} giorni", help="Giorni tra il primo e l'ultimo sinistro del gruppo")
+n_iban = int(f.get("iban_distinti", 0))
+m3.metric("IBAN usati", f"{n_iban} per {int(f['n_sinistri'])} sinistri",
+          help="Conti correnti distinti su cui sono stati chiesti i risarcimenti del gruppo")
 
 sx, dx = st.columns([2, 3], gap="large")
 with sx:
@@ -145,7 +154,9 @@ with sx:
         with st.container(border=True):
             st.write(st.session_state[chiave])
 with dx:
-    st.plotly_chart(figura_grafo(sottografo_gruppo(p, ids)), width="stretch")
+    st.subheader(f"Come sono collegati i {len(ids)} sinistri")
+    mostra_prof = st.toggle("Mostra officine, avvocati e periti", value=False, key=f"prof_{selezionato}")
+    st.plotly_chart(figura_grafo(sottografo_gruppo(p, ids, includi_deboli=mostra_prof)), width="stretch")
 
 # --- Decisione ------------------------------------------------------------
 st.subheader("Decisione")
@@ -228,13 +239,16 @@ with st.expander("Indicatori tecnici"):
         [
             ("ID tecnico del gruppo (community detection)", str(selezionato)),
             ("Finestra temporale", f"{int(f['finestra_giorni'])} giorni"),
+            ("Persone coinvolte", str(int(f["n_persone"]))),
+            ("IBAN distinti", str(int(f.get("iban_distinti", 0)))),
+            ("Telefoni distinti", str(int(f.get("telefoni_distinti", 0)))),
             ("Sinistri per IBAN", numero(f["sinistri_per_iban"], 1)),
             ("Sinistri per telefono", numero(f["sinistri_per_telefono"], 1)),
             ("Quota officina più frequente", percentuale(f["quota_officina_top"])),
             ("Quota avvocato più frequente", percentuale(f["quota_avvocato_top"])),
             ("Persone con più ruoli", str(int(f["persone_multi_ruolo"]))),
             ("Densità della rete", numero(f["densita"], 2)),
-            ("Ricorrenze testimone", str(int(f["testimone_ricorrente_max"]))),
+            ("Sinistri con lo stesso testimone (max)", str(int(f["testimone_ricorrente_max"]))),
             ("Indice di anomalia", numero(a["anomaly_score"], 2)),
         ],
         columns=["Indicatore", "Valore"],

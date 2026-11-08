@@ -18,7 +18,7 @@ NOMI = {
     "quota_multi_ruolo": "Quota persone multi-ruolo", "sinistri_per_iban": "Sinistri per IBAN",
     "sinistri_per_telefono": "Sinistri per telefono", "quota_officina_top": "Concentrazione officina",
     "quota_avvocato_top": "Concentrazione avvocato", "finestra_giorni": "Finestra temporale (giorni)",
-    "densita": "Densità della rete", "testimone_ricorrente_max": "Testimone ricorrente",
+    "densita": "Densità della rete", "testimone_ricorrente_max": "Stesso testimone in più sinistri",
     "importo_totale": "Importo totale", "score_pratica_medio": "Punteggio regole attuali medio",
     "anomaly_score": "Anomaly score",
 }
@@ -41,7 +41,11 @@ def render() -> None:
     fig.update_layout(height=440, margin=dict(t=10, b=10), xaxis=dict(title="Coefficiente standardizzato (β)", gridcolor="rgba(0,0,0,.06)"),
                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
     st.plotly_chart(fig, width="stretch")
-    st.caption("Champion: regressione logistica su feature standardizzate. Rosso: aumenta il rischio. Grigio: lo riduce.")
+    C = p.get("C_champion")
+    st.caption("Champion: regressione logistica con regolarizzazione L2 su 6 segnali di rete standardizzati"
+               + (f" (C = {numero(C, 2)}, scelto in cross-validation)" if C is not None else "")
+               + ". Officine, avvocati e periti sono esclusi: sono segnali secondari. "
+               "Rosso: aumenta il rischio. Grigio: lo riduce.")
     metodo = p.get("metodo_score", "")
     if metodo.startswith("cross_validation"):
         k = metodo.split("_")[2]
@@ -59,7 +63,7 @@ def render() -> None:
     X = fdf[cols].fillna(0)
     conf = pd.DataFrame({
         "Gruppo": fdf["id_gruppo"].astype(str).map(codici_gruppo(p)), "Sinistri": fdf["n_sinistri"].astype(int),
-        "Champion (logistica)": np.round(p["model"].predict_proba(X)[:, 1] * 100).astype(int),
+        "Champion (logistica)": fdf["score_rete"].astype(int),  # score fuori campione, quello usato negli alert
         "Challenger (gradient boosting)": np.round(p["challenger"].predict_proba(X)[:, 1] * 100).astype(int),
         "Etichetta reale": fdf["label_frode"].map({1: "frode", 0: "regolare"}),
     })
@@ -67,7 +71,8 @@ def render() -> None:
     st.dataframe(conf.sort_values("Gruppo"), hide_index=True, width="stretch",
                  column_config={c: st.column_config.ProgressColumn(c, min_value=0, max_value=100, format="%d")
                                 for c in ["Champion (logistica)", "Challenger (gradient boosting)"]})
-    st.caption("Il challenger gira in shadow mode: produce score solo per confronto e non genera alert.")
+    st.caption("Champion: score fuori campione (quello usato negli alert). Challenger: gira in shadow mode, "
+               "addestrato su tutti i gruppi, produce score solo per confronto e non genera alert.")
 
     st.subheader("Governance")
     mon = monitoraggio()
@@ -90,14 +95,15 @@ def render() -> None:
     st.caption(f"Dataset attuale: {len(p['sinistri'])} sinistri, {len(p['coinvolgimenti'])} coinvolgimenti, "
                f"{int(p['sinistri']['label_frode'].sum())} sinistri fraudolenti.")
     with st.form("dati"):
-        c1, c2, c3 = st.columns(3)
-        n = c1.number_input("Numero di sinistri", 50, 2000, 200, step=50)
-        anelli = c2.number_input("Anelli di frode", 0, 15, 4)
-        seed = c3.number_input("Seed", 0, 99999, 42)
+        c1, c2, c3, c4 = st.columns(4)
+        n = c1.number_input("Numero di sinistri", 50, 3000, 600, step=50)
+        anelli = c2.number_input("Anelli di frode", 0, 30, 8)
+        legittimi = c3.number_input("Gruppi legittimi collegati", 0, 30, 8, help="Famiglie e flotte aziendali")
+        seed = c4.number_input("Seed", 0, 99999, 42)
         rigenera = st.form_submit_button("Rigenera dati")
     if rigenera:
         with st.spinner("Generazione dati e ricalcolo della rete…"):
-            genera_dataset(n_sinistri=int(n), n_anelli=int(anelli), seed=int(seed))
+            genera_dataset(n_sinistri=int(n), n_anelli=int(anelli), seed=int(seed), n_gruppi_legittimi=int(legittimi))
             ricarica_pipeline()
         for k in ("gruppo_selezionato", "ultimo_salvataggio"):
             st.session_state.pop(k, None)
