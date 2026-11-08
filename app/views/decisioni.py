@@ -1,11 +1,47 @@
 """Analisi > Storico decisioni."""
 from __future__ import annotations
 
+import datetime as dt
+
 import pandas as pd
 import streamlit as st
 
 from common import DECISIONI, ESITI, codici_gruppo, data_ora_it, percentuale, pipeline, vai_a_gruppo
-from retisinistri.decisions import dataset_riaddestramento, lista_decisioni
+from retisinistri.decisions import dataset_riaddestramento, lista_decisioni, registra_esito
+
+
+def _registra_esiti(storico: pd.DataFrame, codici: dict[str, str]) -> None:
+    """Chiusura delle decisioni "In corso" con l'esito finale (Frode confermata / Regolare)."""
+    st.markdown("**Esiti da registrare**")
+    messaggio = st.session_state.pop("esito_registrato", None)
+    if messaggio:
+        st.success(messaggio)
+    aperte = storico[storico["esito_finale"] == "in_corso"]
+    if aperte.empty:
+        st.caption("Nessuna decisione in corso.")
+        return
+
+    def etichetta(id_dec: int) -> str:
+        d = aperte[aperte["id_decisione"] == id_dec].iloc[0]
+        return (f"{codici.get(d['id_gruppo'], 'gruppo non più attivo')} · {DECISIONI.get(d['decisione'], d['decisione'])}"
+                f" · {data_ora_it(d['timestamp'])} · {d['id_liquidatore']}")
+
+    with st.form("registra_esito", border=True):
+        c1, c2 = st.columns([3, 2])
+        id_dec = c1.selectbox("Decisione in corso", aperte["id_decisione"].tolist(), format_func=etichetta)
+        esito = c2.radio("Esito finale", ["frode_confermata", "regolare"], format_func=ESITI.get, horizontal=True)
+        note = st.text_input("Note (facoltative)", placeholder="Es. confermato dall'ufficio antifrode, denuncia presentata")
+        if st.form_submit_button("Registra esito", type="primary"):
+            liquidatore = str(st.session_state.get("id_liquidatore", "")).strip()
+            if not liquidatore:
+                st.warning("Inserisci l'ID liquidatore nella barra laterale.")
+            else:
+                gruppo = codici.get(aperte[aperte["id_decisione"] == id_dec].iloc[0]["id_gruppo"], "gruppo")
+                registra_esito(int(id_dec), esito, liquidatore, note)
+                st.session_state["esito_registrato"] = (
+                    f"Esito registrato per {gruppo}: {ESITI[esito]} · {dt.datetime.now():%d/%m/%Y %H:%M} · {liquidatore}"
+                )
+                st.rerun()
 
 
 def render() -> None:
@@ -58,6 +94,8 @@ def render() -> None:
         g = vista.iloc[ev.selection.rows[0]]["id"]
         if g in alerts and b.button(f"Apri {codici[g]}"):
             vai_a_gruppo(g)
+
+    _registra_esiti(storico, codici)
 
     st.markdown("**Dataset per il riaddestramento**")
     ds = pd.DataFrame(dataset_riaddestramento())

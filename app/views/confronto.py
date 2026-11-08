@@ -42,20 +42,26 @@ def render() -> None:
     stp_asis = 1 - pred_asis.mean()
     stp_tobe = 1 - pred_tobe.mean()
 
+    cm_rete = matrice_confusione(y, pred_rete)
+    st.markdown(
+        f"Lo score di rete intercetta **{cm_rete['TP']} frodi su {int(y.sum())}**, contro "
+        f"**{cm_asis['TP']}** delle regole attuali (sinistri fraudolenti, soglia di rete {soglia_rete})."
+    )
+
     m = st.columns(4)
     m[0].metric("Recall", percentuale(k_tobe["recall"]), _pp(k_tobe["recall"] - k_asis["recall"]),
                 help="Quota di frodi intercettate")
     m[1].metric("Precisione", percentuale(k_tobe["precision"]), _pp(k_tobe["precision"] - k_asis["precision"]),
                 help="Quota di segnalazioni che sono frodi")
-    m[2].metric("FPR", percentuale(k_tobe["FPR"], 1), _pp(k_tobe["FPR"] - k_asis["FPR"], 1), delta_color="inverse",
-                help="Quota di sinistri regolari segnalati per errore")
-    m[3].metric("STP", percentuale(stp_tobe), _pp(stp_tobe - stp_asis),
-                help="Straight-through processing: pratiche liquidabili senza segnalazione")
+    m[2].metric("Falsi allarmi (% regolari)", percentuale(k_tobe["FPR"], 1), _pp(k_tobe["FPR"] - k_asis["FPR"], 1), delta_color="inverse",
+                help="FPR (false positive rate): quota di sinistri regolari segnalati per errore")
+    m[3].metric("Pratiche senza segnalazione", percentuale(stp_tobe), _pp(stp_tobe - stp_asis),
+                help="STP (straight-through processing): quota di pratiche liquidabili senza segnalazione")
     st.caption("Variazioni rispetto alle regole attuali.")
 
     sx, dx = st.columns([3, 2], gap="large")
     with sx:
-        metriche = ["Recall", "Precisione", "FPR"]
+        metriche = ["Recall", "Precisione", "Falsi allarmi"]
         v_asis = [k_asis["recall"], k_asis["precision"], k_asis["FPR"]]
         v_tobe = [k_tobe["recall"], k_tobe["precision"], k_tobe["FPR"]]
         fig = go.Figure([
@@ -85,10 +91,11 @@ def render() -> None:
         pr = (sinistri["score_rete"] >= s).astype(int)
         pr = (pred_asis | pr) if combina else pr
         k = metriche_kpi(y, pr)
-        righe.append({"Soglia": s, "Recall": k["recall"], "Precisione": k["precision"], "FPR": k["FPR"], "Segnalazioni": int(pr.sum())})
+        righe.append({"Soglia": s, "Recall": k["recall"], "Precisione": k["precision"], "Falsi allarmi": k["FPR"],
+                      "Segnalazioni": int(pr.sum())})
     st_df = pd.DataFrame(righe)
     fig2 = go.Figure()
-    for nome, col, tratto in (("Recall", PRINCIPALE, "solid"), ("Precisione", NEUTRO, "dash"), ("FPR", RISCHIO, "solid")):
+    for nome, col, tratto in (("Recall", PRINCIPALE, "solid"), ("Precisione", NEUTRO, "dash"), ("Falsi allarmi", RISCHIO, "solid")):
         fig2.add_trace(go.Scatter(x=st_df["Soglia"], y=st_df[nome], name=nome, mode="lines", line=dict(width=2, color=col, dash=tratto),
                                   hovertemplate=f"{nome}: %{{y:.1%}}<extra></extra>"))
     fig2.add_vline(x=soglia_rete, line_dash="dot", line_color=NEUTRO, annotation_text="soglia attuale")
@@ -99,10 +106,15 @@ def render() -> None:
         tab = st_df.copy()
         for c in ("Recall", "Precisione"):
             tab[c] = tab[c].map(percentuale)
-        tab["FPR"] = tab["FPR"].map(lambda v: percentuale(v, 1))
+        tab["Falsi allarmi"] = tab["Falsi allarmi"].map(lambda v: percentuale(v, 1))
+        tab = tab.rename(columns={"Falsi allarmi": "Falsi allarmi (% regolari)"})
         st.dataframe(tab, hide_index=True, width="stretch")
 
-    st.markdown("**Simulatore pesi delle regole attuali**")
+    with st.expander("Simulatore pesi delle regole attuali", expanded=False):
+        _simulatore(cfg, sinistri, y, soglia_asis, k_asis, pred_asis)
+
+
+def _simulatore(cfg, sinistri, y, soglia_asis, k_asis, pred_asis) -> None:
     pesi_base = cfg.get("asis", {}).get("weights", {})
     etichette = {"importo_richiesto": "Importo > 5.000 €", "giorni_da_inizio_polizza": "Polizza < 30 giorni",
                  "orario_notturno": "Notturno", "verbale_autorita": "Senza verbale", "testimone": "Testimone"}

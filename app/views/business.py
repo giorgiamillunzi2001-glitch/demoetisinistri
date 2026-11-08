@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from common import PRINCIPALE, RISCHIO, euro, numero, pipeline
+from common import PRINCIPALE, RISCHIO, euro, numero, percentuale, pipeline
 from retisinistri.metrics import business_case
 
 
@@ -41,6 +41,19 @@ def render() -> None:
     st.caption(f"Costo indagini: {euro(costo_indagini)} all'anno ({numero(n_indagini)} indagini × {euro(costo_ind)}).")
     if netto <= 0:
         st.warning("Con queste ipotesi il progetto non genera valore positivo.")
+
+    p = pipeline()
+    sn = p["sinistri"]
+    frodi = int(sn["label_frode"].sum())
+    soglia = int(p["config"].get("scoring", {}).get("soglia_media", 40))
+    intercettate = int(((sn["score_rete"] >= soglia) & (sn["label_frode"] == 1)).sum())
+    if frodi:
+        st.caption(
+            f"Nel prototipo lo score di rete intercetta {intercettate} sinistri fraudolenti su {frodi} "
+            f"(recall {percentuale(intercettate / frodi)}, soglia {soglia}). La quota di frodi extra evitate qui sopra "
+            "è un'ipotesi prudente e volutamente molto più bassa: la recall è misurata su dati sintetici e non è "
+            "trasferibile così com'è al portafoglio reale."
+        )
 
     st.markdown("**Scenari di efficacia**")
     righe = []
