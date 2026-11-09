@@ -7,9 +7,19 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from common import (
+    NEUTRO,
+    PRINCIPALE,
+    RISCHIO,
+    codici_gruppo,
+    numero,
+    percentuale,
+    pipeline,
+    ricarica_pipeline,
+)
 
-from common import NEUTRO, PRINCIPALE, RISCHIO, codici_gruppo, numero, percentuale, pipeline, ricarica_pipeline
 from retisinistri.decisions import monitoraggio
+from retisinistri.metrics import metriche_kpi
 from retisinistri.models import FORBIDDEN_FEATURES
 from retisinistri.synthetic import genera_dataset
 
@@ -69,14 +79,12 @@ def _calibrazione(fdf: pd.DataFrame, p: dict) -> None:
         fig2.update_traces(opacity=0.85)
         st.plotly_chart(fig2, width="stretch", config={"displayModeBar": False})
         st.caption("Distribuzione degli score di rete: probabilità calibrata fuori campione, massimo 99. "
-                   f"La stima corretta per la prevalenza attesa ({percentuale(p.get('prevalenza_attesa', 0.05))}) "
-                   "è nella tabella Champion vs challenger e negli indicatori tecnici di ogni segnalazione.")
+                   "La probabilità assoluta stimata è nella tabella Champion vs challenger.")
 
 
 def render() -> None:
     p = pipeline()
     fdf = p["feature_df"]
-    cols = p["model_cols"]
 
     st.subheader("Peso dei segnali")
     coef = pd.DataFrame([{"Segnale": NOMI.get(k, k), "Coefficiente": v, "Odds ratio": float(np.exp(v))}
@@ -109,30 +117,67 @@ def render() -> None:
         st.dataframe(tab, hide_index=True, width="stretch")
 
     st.subheader("Champion vs challenger")
-    X = fdf[cols].fillna(0)
+    soglia = int(p["config"].get("scoring", {}).get("soglia_media", 40))
+    prev = percentuale(p.get("prevalenza_attesa", 0.05))
+    nome_prob = f"Probabilità assoluta stimata (prevalenza {prev})"
+    y = fdf["label_frode"].astype(int)
+    righe = []
+    for nome, col in (("Champion (logistica)", "score_rete"), ("Challenger (gradient boosting)", "score_challenger")):
+        if col not in fdf.columns:
+            continue
+        k = metriche_kpi(y, (fdf[col] >= soglia).astype(int), fdf[col]) if y.nunique() == 2 else None
+        righe.append({"Modello": nome,
+                      "AUC": numero(k["AUC"], 2) if k else "n.d.",
+                      f"Recall (soglia {soglia})": percentuale(k["recall"]) if k else "n.d.",
+                      f"Precisione (soglia {soglia})": percentuale(k["precision"]) if k else "n.d."})
+    st.table(pd.DataFrame(righe).set_index("Modello"))
+    st.caption("Metriche fuori campione per entrambi, a livello di gruppo: stessa cross-validation, ogni gruppo è valutato "
+               "da modelli addestrati senza di lui. Il challenger gira in shadow mode e non genera segnalazioni.")
+
     conf = pd.DataFrame({
         "Gruppo": fdf["id_gruppo"].astype(str).map(codici_gruppo(p)), "Sinistri": fdf["n_sinistri"].astype(int),
-        "Champion (logistica)": fdf["score_rete"].astype(int),  # score fuori campione, quello usato nelle segnalazioni
-        "Challenger (gradient boosting)": np.round(p["challenger"].predict_proba(X)[:, 1] * 100).astype(int),
-        f"Prob. con prevalenza {percentuale(p.get('prevalenza_attesa', 0.05))}": (fdf["prob_frode"] * 100).round(1),
+        "Champion (logistica)": fdf["score_rete"].astype(int),
+        "Challenger (gradient boosting)": fdf.get("score_challenger", pd.Series(0, index=fdf.index)).astype(int),
+        nome_prob: (fdf["prob_frode"] * 100).round(1),
         "Etichetta reale": fdf["label_frode"].map({1: "frode", 0: "regolare"}),
     })
     conf["Differenza"] = conf["Challenger (gradient boosting)"] - conf["Champion (logistica)"]
     st.dataframe(conf.sort_values("Gruppo"), hide_index=True, width="stretch",
-                 column_config={c: st.column_config.ProgressColumn(c, min_value=0, max_value=100, format="%d")
-                                for c in ["Champion (logistica)", "Challenger (gradient boosting)"]})
-    st.caption("Champion: score fuori campione (quello usato nelle segnalazioni). Challenger: gira in shadow mode, "
-               "addestrato su tutti i gruppi, produce score solo per confronto e non genera segnalazioni.")
+                 column_config={**{c: st.column_config.ProgressColumn(c, min_value=0, max_value=99, format="%d")
+                                   for c in ["Champion (logistica)", "Challenger (gradient boosting)"]},
+                                nome_prob: st.column_config.NumberColumn(nome_prob, format="%.1f%%")})
+    st.markdown(
+        "Lo **score di rete** (0-99) è un indice di rischio per ordinare i casi ed è l'unico valore mostrato nelle "
+        f"pagine operative; la **probabilità assoluta stimata** riporta la stessa stima alla prevalenza attesa di "
+        f"frode nella realtà ({prev}) ed è quella da usare nei calcoli economici."
+    )
 
     _calibrazione(fdf, p)
 
     st.subheader("Governance")
-    mon = monitoraggio()
+    sc = p["config"].get("scoring", {})
+    mon = monitoraggio(p["sinistri"], {a["id_gruppo"] for a in p["alerts"]},
+                       int(sc.get("soglia_media", 40)), int(sc.get("soglia_alta", 70)))
+    nd = "n.d."
     c = st.columns(3)
-    c[0].metric("PSI", numero(mon["psi"], 2), help="Stabilità della popolazione: < 0,10 stabile · 0,10–0,25 da monitorare · > 0,25 instabile")
-    c[1].metric("Override rate", percentuale(mon["override_rate"]))
-    c[2].metric("FPR per provincia (max)", percentuale(mon["fpr_provincia"]))
-    st.caption("Valori di monitoraggio dimostrativi.")
+    c[0].metric("PSI", numero(mon["psi"], 2) if mon["psi"] is not None else nd,
+                help="Stabilità della distribuzione dello score di rete dei sinistri (non collegato, basso, medio, alto): "
+                     "prima metà del dataset contro seconda metà, per data del sinistro. "
+                     "< 0,10 stabile · 0,10–0,25 da monitorare · > 0,25 instabile")
+    c[1].metric("Override rate", percentuale(mon["override_rate"]) if mon["override_rate"] is not None else nd,
+                help="Dallo storico decisioni: quota di segnalazioni decise in cui il liquidatore ha archiviato o "
+                     "liquidato (ultima decisione per gruppo). n.d. se non ci sono ancora decisioni.")
+    c[2].metric("Falsi allarmi per provincia (max)",
+                f"{percentuale(mon['fpr_provincia'], 1)} · {mon['provincia_max']}" if mon["fpr_provincia"] is not None else nd,
+                help="Quota di sinistri regolari con score di rete pari o superiore alla soglia media, per provincia "
+                     "(province con almeno 10 sinistri regolari). Solo controllo di equità: la provincia non è un input del modello.")
+    if mon["fpr_per_provincia"] is not None:
+        with st.expander("Falsi allarmi per provincia"):
+            t = mon["fpr_per_provincia"].rename(columns={"provincia": "Provincia", "regolari": "Sinistri regolari",
+                                                         "falsi_allarmi": "Falsi allarmi", "fpr": "Quota"})
+            t["Quota"] = t["Quota"].map(lambda v: percentuale(v, 1))
+            st.dataframe(t, hide_index=True, width="stretch")
+    st.caption("Valori calcolati dai dati del prototipo; n.d. quando non sono calcolabili.")
     st.markdown(
         f"""
 - Feature vietate bloccate in addestramento: {', '.join(sorted(FORBIDDEN_FEATURES))}

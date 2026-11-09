@@ -4,8 +4,18 @@ import datetime as dt
 
 import pandas as pd
 import streamlit as st
+from common import (
+    AIUTO_SCORE,
+    LIVELLO,
+    codici_gruppo,
+    euro,
+    figura_grafo,
+    maschera,
+    pipeline,
+    sottografo_gruppo,
+    vai_a_gruppo,
+)
 
-from common import LIVELLO, codici_gruppo, euro, figura_grafo, maschera, pipeline, sottografo_gruppo, vai_a_gruppo
 from retisinistri.score_pratica import calcola_score_pratica
 from retisinistri.scoring import assegna_fascia
 
@@ -90,7 +100,7 @@ with st.form("nuova_pratica"):
 AZIONE_ANTIFRODE = "Proposta: approfondimento dell'ufficio antifrode · decide il liquidatore"
 AZIONE_VERIFICA = "Proposta: verifica documentale"
 AZIONE_ORDINARIA = "Liquidazione ordinaria"
-AIUTO_SCORE_STIMATO = (
+AIUTO_SCORE_STIMATO = AIUTO_SCORE + " " + (
     "Se la denuncia condivide IBAN, telefono o persone con un gruppo segnalato, eredita lo score di rete "
     "di quel gruppo (il più alto, se i gruppi sono più di uno). Se è collegata solo a sinistri non segnalati "
     "vale 15 punti per ogni sinistro collegato, fino a un massimo di 60. Senza collegamenti vale 0."
@@ -191,7 +201,7 @@ if r:
     k1, k2, k3 = st.columns(3)
     k1.metric("Punteggio regole attuali", f"{r['punteggio']:.0f}/100",
               help=f"Le regole attuali segnalano la pratica da {soglia_regole:.0f} punti in su")
-    k2.metric("Score di rete stimato (dal gruppo collegato)", f"{r['score_rete']}/100", help=AIUTO_SCORE_STIMATO)
+    k2.metric("Score di rete stimato (dal gruppo collegato)", r["score_rete"], help=AIUTO_SCORE_STIMATO)
     k3.metric("Sinistri collegati in archivio", len(r["collegati"]))
 
     m1, m2 = st.columns(2)

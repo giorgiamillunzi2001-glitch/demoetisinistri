@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from retisinistri.config import DEFAULT_CONFIG_PATH, load_config  # noqa: E402
-from retisinistri.pipeline import esegui_pipeline  # noqa: E402
+from retisinistri.config import DEFAULT_CONFIG_PATH, load_config
+from retisinistri.pipeline import esegui_pipeline
 
 # Palette dell'app per i grafici della pagina Analisi
 PRINCIPALE = "#14213D"  # serie principale
@@ -26,6 +26,7 @@ RISCHIO = "#C0392B"     # rischio o valori negativi
 NEUTRO = "#A6A6A6"      # tutto il resto
 
 LIVELLO = {"alta": "Alto", "media": "Medio", "bassa": "Basso"}
+AIUTO_SCORE = "Indice di rischio da 0 a 99 per ordinare i casi: più è alto, prima conviene esaminare il gruppo."
 
 GRIGIO_NODO = "#A6A6A6"
 TIPI_NODO = {

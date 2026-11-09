@@ -4,7 +4,7 @@ import networkx as nx
 import pandas as pd
 
 
-def _entity_key(prefix: str, value: str | int | float | None) -> str | None:
+def _entity_key(prefix: str, value: str | float | None) -> str | None:
     if value is None or pd.isna(value):
         return None
     return f"{prefix}:{str(value).strip()}"

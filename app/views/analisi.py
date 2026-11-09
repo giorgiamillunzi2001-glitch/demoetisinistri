@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import streamlit as st
-
 from views import business, confronto, decisioni, modello
 
 st.title("Analisi")

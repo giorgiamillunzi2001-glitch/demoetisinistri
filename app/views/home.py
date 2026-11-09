@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import streamlit as st
-
 from common import (
+    AIUTO_SCORE,
     COLONNA_ID_NASCOSTA,
     DECISIONI,
     codice_gruppo,
@@ -13,6 +13,7 @@ from common import (
     tabella_alert,
     vai_a_gruppo,
 )
+
 from retisinistri.decisions import lista_decisioni
 
 p = pipeline()
@@ -31,7 +32,8 @@ c1, c2, c3, c4 = st.columns(4)
 c1.metric("Sinistri analizzati", f"{len(p['sinistri']):,}".replace(",", "."))
 c2.metric("Segnalazioni aperte", len(alerts))
 c3.metric("Importo a rischio", euro(importo_rischio), help="Somma degli importi richiesti nei gruppi segnalati")
-c4.metric("Da lavorare", len([a for a in alerts if a["id_gruppo"] not in gestiti]))
+c4.metric("Livello alto", len([a for a in alerts if a["fascia"] == "alta"]),
+          help="Segnalazioni con score di rete pari o superiore alla soglia del livello alto")
 
 st.subheader("Segnalazioni prioritarie")
 df = tabella_alert(p, gestiti).head(5)
@@ -45,7 +47,7 @@ else:
         on_select="rerun",
         selection_mode="single-row",
         key=f"home_alert_{st.session_state.get('home_alert_ver', 0)}",
-        column_config={"Score di rete": st.column_config.NumberColumn(format="%d"), **COLONNA_ID_NASCOSTA},
+        column_config={"Score di rete": st.column_config.NumberColumn(format="%d", help=AIUTO_SCORE), **COLONNA_ID_NASCOSTA},
     )
     if ev.selection.rows:
         # Nuova chiave alla prossima visita: la tabella torna senza selezione

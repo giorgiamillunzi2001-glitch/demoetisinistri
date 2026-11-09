@@ -39,28 +39,33 @@ SCORE_MASSIMO = 99  # lo score mostrato non arriva mai a 100: è una stima, non 
 
 
 def _score_fuori_campione(
-    champion, X: pd.DataFrame, y: pd.Series, prevalenza_attesa: float, prevalenza_fallback: float
-) -> tuple[np.ndarray, np.ndarray, str]:
+    champion, challenger, X: pd.DataFrame, y: pd.Series, prevalenza_attesa: float, prevalenza_fallback: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
     """Probabilità di frode di ogni gruppo, calcolata da un modello addestrato SENZA quel gruppo.
 
     Cross-validation stratificata (fino a 5 fold). In ogni fold si riaddestrano da capo la logistica
     (con scelta del C) e la calibrazione sigmoid; poi la probabilità calibrata viene riportata dalla
-    prevalenza del fold di training alla prevalenza attesa. Restituisce (probabilità calibrate,
-    probabilità corrette per la prevalenza, metodo). Con meno di 2 gruppi per classe non è possibile:
-    si usa il modello completo e il metodo è "in_sample" (l'app mostra un avviso).
+    prevalenza del fold di training alla prevalenza attesa. Negli stessi fold si riaddestra anche il
+    challenger, così i due modelli sono confrontati sugli stessi gruppi esclusi. Restituisce
+    (probabilità calibrate, probabilità corrette per la prevalenza, probabilità del challenger, metodo).
+    Con meno di 2 gruppi per classe non è possibile: si usano i modelli completi e il metodo è
+    "in_sample" (l'app mostra un avviso).
     """
     min_classe = int(y.value_counts().min()) if y.nunique() == 2 else 0
     if min_classe < 2:
         p_cal = champion.predict_proba(X)[:, 1]
-        return p_cal, correggi_prevalenza(p_cal, prevalenza_fallback, prevalenza_attesa), "in_sample"
+        p_chal = challenger.predict_proba(X)[:, 1]
+        return p_cal, correggi_prevalenza(p_cal, prevalenza_fallback, prevalenza_attesa), p_chal, "in_sample"
     cv = StratifiedKFold(n_splits=min(5, min_classe), shuffle=True, random_state=42)
     p_cal = np.zeros(len(X))
     p_corr = np.zeros(len(X))
+    p_chal = np.zeros(len(X))
     for train, test in cv.split(X, y):
         modello_fold, _ = fit_calibrato(X.iloc[train], y.iloc[train])
         p_cal[test] = modello_fold.predict_proba(X.iloc[test])[:, 1]
         p_corr[test] = correggi_prevalenza(p_cal[test], float(y.iloc[train].mean()), prevalenza_attesa)
-    return p_cal, p_corr, f"cross_validation_{cv.get_n_splits()}_fold"
+        p_chal[test] = fit_challenger(X.iloc[train], y.iloc[train]).predict_proba(X.iloc[test])[:, 1]
+    return p_cal, p_corr, p_chal, f"cross_validation_{cv.get_n_splits()}_fold"
 
 
 def esegui_pipeline(config: dict | None = None) -> dict:
@@ -91,7 +96,7 @@ def esegui_pipeline(config: dict | None = None) -> dict:
         ids = [claim_id for claim_id, mapped in community_map.items() if mapped == group_id]
         feat = calcola_feature_gruppo(ids, sinistri, coinvolgimenti, G_proj)
         feat["id_gruppo"] = group_id
-        feat["label_frode"] = int((sinistri[sinistri["id_sinistro"].isin(ids)]["label_frode"].mean() > 0.5))
+        feat["label_frode"] = int(sinistri[sinistri["id_sinistro"].isin(ids)]["label_frode"].mean() > 0.5)
         groups[group_id] = feat
 
     feature_rows = list(groups.values())
@@ -117,9 +122,10 @@ def esegui_pipeline(config: dict | None = None) -> dict:
     champion, coefs = fit_champion(X_train, y_train)
     challenger = fit_challenger(X_train, y_train)
     prevalenza_attesa = float(cfg.get("scoring", {}).get("prevalenza_attesa", 0.05))
-    p_cal, p_corr, metodo = _score_fuori_campione(champion, X, y, prevalenza_attesa, float(y_train.mean()))
+    p_cal, p_corr, p_chal, metodo = _score_fuori_campione(champion, challenger, X, y, prevalenza_attesa, float(y_train.mean()))
     features_df["prob_calibrata"] = p_cal
     features_df["prob_frode"] = p_corr
+    features_df["score_challenger"] = [min(SCORE_MASSIMO, int(round(100 * p))) for p in p_chal]
     # Score di rete = probabilità calibrata fuori campione (scala del campione), limitata a 99.
     # La probabilità corretta per la prevalenza attesa resta come stima secondaria ("prob_frode").
     features_df["score_rete"] = [min(SCORE_MASSIMO, int(round(100 * p))) for p in p_cal]
@@ -132,7 +138,8 @@ def esegui_pipeline(config: dict | None = None) -> dict:
     sinistri["fascia"] = sinistri["score_rete"].apply(lambda score: assegna_fascia(score, cfg.get("scoring", {}).get("soglia_media", 40), cfg.get("scoring", {}).get("soglia_alta", 70)))
 
     colonne_feature = [c for c in features_df.columns
-                       if c not in {"id_gruppo", "label_frode", "score_rete", "fascia", "prob_calibrata", "prob_frode"}]
+                       if c not in {"id_gruppo", "label_frode", "score_rete", "fascia", "prob_calibrata", "prob_frode",
+                                    "score_challenger"}]
     alerts = []
     for _, row in features_df.iterrows():
         if row["fascia"] in {"media", "alta"}:

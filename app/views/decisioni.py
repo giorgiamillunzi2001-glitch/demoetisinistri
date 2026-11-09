@@ -5,9 +5,22 @@ import datetime as dt
 
 import pandas as pd
 import streamlit as st
+from common import (
+    DECISIONI,
+    ESITI,
+    codici_gruppo,
+    data_ora_it,
+    percentuale,
+    pipeline,
+    vai_a_gruppo,
+)
 
-from common import DECISIONI, ESITI, codici_gruppo, data_ora_it, percentuale, pipeline, vai_a_gruppo
-from retisinistri.decisions import dataset_riaddestramento, lista_decisioni, registra_esito
+from retisinistri.decisions import (
+    dataset_riaddestramento,
+    lista_decisioni,
+    override_rate,
+    registra_esito,
+)
 
 
 def _registra_esiti(storico: pd.DataFrame, codici: dict[str, str]) -> None:
@@ -56,13 +69,13 @@ def render() -> None:
         return
 
     ultime = storico.drop_duplicates("id_gruppo", keep="first")
-    override = ultime[ultime["id_gruppo"].isin(alerts) & ultime["decisione"].isin(["liquidazione", "archiviazione"])]
+    quota_override = override_rate(set(alerts))
     c = st.columns(4)
     c[0].metric("Decisioni registrate", len(storico))
     c[1].metric("Segnalazioni gestite", f"{int(ultime['id_gruppo'].isin(alerts).sum())} su {len(alerts)}")
     c[2].metric("Frodi confermate", int((ultime["esito_finale"] == "frode_confermata").sum()))
-    c[3].metric("Override del modello", percentuale(len(override) / max(1, len(ultime))),
-                help="Gruppi segnalati che il liquidatore ha archiviato o liquidato")
+    c[3].metric("Override del modello", percentuale(quota_override) if quota_override is not None else "n.d.",
+                help="Quota di segnalazioni decise in cui il liquidatore ha archiviato o liquidato (ultima decisione per gruppo)")
 
     f1, f2, f3 = st.columns(3)
     liq = f1.multiselect("Liquidatore", sorted(storico["id_liquidatore"].unique()))

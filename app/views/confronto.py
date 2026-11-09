@@ -4,8 +4,8 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-
 from common import NEUTRO, PRINCIPALE, RISCHIO, percentuale, pipeline
+
 from retisinistri.metrics import matrice_confusione, metriche_kpi
 from retisinistri.score_pratica import aggiungi_score_pratica
 

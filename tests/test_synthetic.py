@@ -1,6 +1,6 @@
 import pandas as pd
 
-import retisinistri.synthetic as synthetic
+from retisinistri import synthetic
 from retisinistri.synthetic import genera_dataset
 
 

@@ -4,8 +4,8 @@ import datetime as dt
 
 import pandas as pd
 import streamlit as st
-
 from common import (
+    AIUTO_SCORE,
     COLONNA_ID_NASCOSTA,
     DECISIONI,
     codice_gruppo,
@@ -21,6 +21,7 @@ from common import (
     sottografo_gruppo,
     tabella_alert,
 )
+
 from retisinistri.decisions import lista_decisioni, salva_decisione
 from retisinistri.explain_llm import spiega_alert
 
@@ -111,7 +112,8 @@ st.dataframe(
     on_select=_riga_selezionata,
     selection_mode="single-row",
     key=chiave_tabella,
-    column_config={"Score di rete": st.column_config.ProgressColumn("Score di rete", min_value=0, max_value=100, format="%d"),
+    column_config={"Score di rete": st.column_config.ProgressColumn("Score di rete", min_value=0, max_value=99, format="%d",
+                                                                    help=AIUTO_SCORE),
                    **COLONNA_ID_NASCOSTA},
 )
 
@@ -136,7 +138,7 @@ st.markdown(f"<h2 style='margin-bottom:0'>{codice} &nbsp;{etichetta_livello(a['f
 st.caption(f"{int(f['n_sinistri'])} sinistri · {int(f['n_persone'])} persone · {euro(f['importo_totale'])}")
 
 m1, m2, m3 = st.columns(3)
-m1.metric("Score di rete", f"{a['score_rete']}/100")
+m1.metric("Score di rete", a["score_rete"], help=AIUTO_SCORE)
 m2.metric("Punteggio regole attuali (media)", f"{a['score_pratica_medio']:.0f}/100")
 n_iban = int(f.get("iban_distinti", 0))
 m3.metric("IBAN usati", f"{n_iban} per {int(f['n_sinistri'])} sinistri",
@@ -238,8 +240,6 @@ with st.expander("Indicatori tecnici"):
     ind = pd.DataFrame(
         [
             ("ID tecnico del gruppo (community detection)", str(selezionato)),
-            (f"Probabilità stimata con prevalenza attesa del {percentuale(p.get('prevalenza_attesa', 0.05))}",
-             percentuale(a.get("prob_frode", 0.0), 1)),
             ("Finestra temporale", f"{int(f['finestra_giorni'])} giorni"),
             ("Persone coinvolte", str(int(f["n_persone"]))),
             ("IBAN distinti", str(int(f.get("iban_distinti", 0)))),

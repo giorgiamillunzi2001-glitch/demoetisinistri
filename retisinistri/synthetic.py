@@ -50,7 +50,7 @@ def _email(person_id: str) -> str:
 
 
 def _targa(rng: np.random.Generator) -> str:
-    l = lambda: str(rng.choice(LETTERE))  # noqa: E731
+    l = lambda: str(rng.choice(LETTERE))
     return f"{l()}{l()}{int(rng.integers(100, 999))}{l()}{l()}"
 
 
@@ -129,7 +129,8 @@ def _generate_fraud_ring(ring_index: int, rng: np.random.Generator, base_date: d
 
     Ogni sinistro coinvolge 2-4 membri, come un sinistro normale. I segnali sono volutamente non
     netti: solo una parte dei membri cambia ruolo, l'anello usa più IBAN e telefoni (alcuni propri)
-    e i sinistri possono essere distribuiti su finestre lunghe.
+    e i sinistri sono concentrati nel tempo (60-300 giorni), ma non abbastanza da distinguerli
+    dalle flotte e dalle famiglie con sinistri ravvicinati.
     """
     ring_claims: list[dict] = []
     involvements: list[dict] = []
@@ -156,8 +157,8 @@ def _generate_fraud_ring(ring_index: int, rng: np.random.Generator, base_date: d
     ruoli = ["assicurato", "controparte", "conducente", "testimone"]
     ruolo_abituale = {person: str(rng.choice(ruoli)) for person in ring_people}
     fedelta_ruolo = float(rng.uniform(0.4, 0.85))
-    # anelli più o meno "prudenti": finestra temporale e concentrazione su officina/avvocato variabili
-    finestra = int(rng.integers(120, 600))
+    # anelli più o meno "prudenti": finestra temporale (concentrata) e concentrazione su officina/avvocato variabili
+    finestra = int(rng.integers(60, 300))
     p_officina = float(rng.uniform(0.4, 0.9))
     p_iban_personale = float(rng.uniform(0.0, 0.35))
     start_offset = int(rng.integers(0, 750 - finestra))

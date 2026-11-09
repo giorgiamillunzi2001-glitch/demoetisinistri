@@ -5,6 +5,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "processed" / "decisions.sqlite"
 
@@ -52,9 +55,78 @@ def dataset_riaddestramento() -> list[dict[str, Any]]:
     return [{"id_gruppo": row[0], "decisione": row[1], "esito_finale": row[2], "note": row[3]} for row in rows]
 
 
-def monitoraggio() -> dict[str, float]:
-    """Metriche di governance generiche."""
-    return {"psi": 0.12, "override_rate": 0.08, "fpr_provincia": 0.04}
+DECISIONI_OVERRIDE = {"liquidazione", "archiviazione"}
+
+
+def override_rate(gruppi_segnalati: set[str] | list[str]) -> float | None:
+    """Quota di gruppi segnalati in cui l'ultima decisione del liquidatore va contro il modello
+    (archiviazione o liquidazione). None se nessun gruppo segnalato ha ancora una decisione."""
+    segnalati = {str(g) for g in gruppi_segnalati}
+    ultime: dict[str, str] = {}
+    for d in lista_decisioni():  # ordinate dalla più recente
+        ultime.setdefault(str(d["id_gruppo"]), d["decisione"])
+    decise = [dec for g, dec in ultime.items() if g in segnalati]
+    if not decise:
+        return None
+    return sum(dec in DECISIONI_OVERRIDE for dec in decise) / len(decise)
+
+
+def psi(atteso: Any, osservato: Any, eps: float = 1e-4) -> float | None:
+    """Population Stability Index tra due distribuzioni di categorie (es. fasce di score)."""
+    a, o = pd.Series(atteso), pd.Series(osservato)
+    if a.empty or o.empty:
+        return None
+    categorie = sorted(set(a) | set(o))
+    pa = a.value_counts(normalize=True).reindex(categorie, fill_value=0).clip(lower=eps)
+    po = o.value_counts(normalize=True).reindex(categorie, fill_value=0).clip(lower=eps)
+    return float(((po - pa) * np.log(po / pa)).sum())
+
+
+def monitoraggio(sinistri: Any = None, gruppi_segnalati: Any = (), soglia_media: int = 40, soglia_alta: int = 70,
+                 min_regolari_provincia: int = 10) -> dict[str, Any]:
+    """Metriche di governance calcolate dai dati; un valore non calcolabile è None ("n.d." a video).
+
+    - psi: stabilità della distribuzione dello score di rete dei sinistri (fasce: non collegato,
+      basso, medio, alto), confrontando la prima e la seconda metà del dataset per data del sinistro;
+    - override_rate: dallo storico decisioni (vedi `override_rate`);
+    - fpr_provincia: falsi allarmi (sinistri regolari con score >= soglia media) per provincia,
+      solo per le province con almeno `min_regolari_provincia` sinistri regolari. È un controllo di
+      equità: la provincia non è usata dal modello.
+    """
+    out: dict[str, Any] = {"psi": None, "override_rate": override_rate(gruppi_segnalati),
+                           "fpr_provincia": None, "provincia_max": None, "fpr_per_provincia": None}
+    if sinistri is None or len(sinistri) == 0:
+        return out
+    df = sinistri.copy()
+    if {"data_sinistro", "score_rete"} <= set(df.columns):
+        df["_data"] = pd.to_datetime(df["data_sinistro"], errors="coerce")
+        df = df.dropna(subset=["_data"]).sort_values("_data")
+        if len(df) >= 2:
+            fascia = pd.cut(df["score_rete"], [-1, 0, soglia_media - 1, soglia_alta - 1, 100],
+                            labels=["non collegato", "basso", "medio", "alto"]).astype(str)
+            meta = len(df) // 2
+            out["psi"] = psi(fascia.iloc[:meta], fascia.iloc[meta:])
+    if {"provincia", "label_frode", "score_rete"} <= set(sinistri.columns):
+        reg = sinistri[sinistri["label_frode"] == 0]
+        tab = reg.groupby("provincia").agg(regolari=("score_rete", "size"),
+                                           falsi_allarmi=("score_rete", lambda s: int((s >= soglia_media).sum())))
+        tab = tab[tab["regolari"] >= min_regolari_provincia]
+        if not tab.empty:
+            tab["fpr"] = tab["falsi_allarmi"] / tab["regolari"]
+            tab = tab.sort_values("fpr", ascending=False)
+            out["fpr_provincia"] = float(tab["fpr"].iloc[0])
+            out["provincia_max"] = str(tab.index[0])
+            out["fpr_per_provincia"] = tab.reset_index()
+    return out
+
+
+def azzera_decisioni() -> int:
+    """Cancella tutto lo storico decisioni (uso demo). Restituisce il numero di righe eliminate."""
+    conn = init_db()
+    n = conn.execute("DELETE FROM decisioni").rowcount
+    conn.commit()
+    conn.close()
+    return int(n)
 
 
 def lista_decisioni(id_gruppo: str | None = None) -> list[dict[str, Any]]:

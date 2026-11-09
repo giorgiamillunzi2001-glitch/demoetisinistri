@@ -1,4 +1,3 @@
-import numpy as np
 
 from retisinistri.metrics import business_case, matrice_confusione, metriche_kpi
 

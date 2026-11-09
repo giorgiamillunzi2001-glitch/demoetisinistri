@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections import Counter
-
 import networkx as nx
 import pandas as pd
 
@@ -55,8 +53,8 @@ def calcola_feature_gruppo(gruppo_ids: list[str], sinistri: pd.DataFrame, coinvo
         "sinistri_per_telefono": (len(gruppo_sinistri) / telefoni_distinti) if telefoni_distinti else 0.0,
         "iban_distinti": int(iban_distinti),
         "telefoni_distinti": int(telefoni_distinti),
-        "quota_officina_top": float((office_counts.max() / len(gruppo_sinistri))) if not office_counts.empty else 0.0,
-        "quota_avvocato_top": float((avvocato_counts.max() / len(gruppo_sinistri))) if not avvocato_counts.empty else 0.0,
+        "quota_officina_top": float(office_counts.max() / len(gruppo_sinistri)) if not office_counts.empty else 0.0,
+        "quota_avvocato_top": float(avvocato_counts.max() / len(gruppo_sinistri)) if not avvocato_counts.empty else 0.0,
         "finestra_giorni": finestra,
         "densita": densita,
         "testimone_ricorrente_max": max_witness,

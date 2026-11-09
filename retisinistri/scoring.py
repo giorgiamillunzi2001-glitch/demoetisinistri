@@ -73,18 +73,30 @@ def reason_codes(feature_gruppo: dict[str, Any], coef: dict[str, float], top_n: 
 SOGLIA_FINESTRA_GIORNI = 180
 
 
-def _frase(feature: str, f: dict[str, Any]) -> str | None:
-    """Frase concreta e assoluta per una feature del champion (None se non c'è un fatto da dire)."""
+def _frase(feature: str, f: dict[str, Any], contributi: dict[str, float] | None = None) -> str | None:
+    """Frase concreta e assoluta per una feature del champion (None se non c'è un fatto da dire).
+
+    IBAN e telefoni sono citati solo se il loro contributo allo score del gruppo è positivo.
+    """
+    contributi = contributi or {}
     n = int(f.get("n_sinistri", 0))
     if feature in {"n_sinistri", "sinistri_per_iban", "sinistri_per_telefono"}:
         # Numero di sinistri, IBAN e telefoni descrivono la stessa concentrazione: un'unica frase,
         # che il controllo dei duplicati in `motivazioni` usa una volta sola.
         if n < 3:
             return None
-        k_iban, k_tel = int(f.get("iban_distinti", 0)), int(f.get("telefoni_distinti", 0))
-        iban = "1 solo IBAN" if k_iban == 1 else f"{k_iban} IBAN"
-        tel = "1 solo telefono" if k_tel == 1 else f"{k_tel} telefoni"
-        return f"{n} sinistri su {iban} e {tel}"
+        parti = []
+        if contributi.get("sinistri_per_iban", 0.0) > 0:
+            k_iban = int(f.get("iban_distinti", 0))
+            parti.append("1 solo IBAN" if k_iban == 1 else f"{k_iban} IBAN")
+        if contributi.get("sinistri_per_telefono", 0.0) > 0:
+            k_tel = int(f.get("telefoni_distinti", 0))
+            parti.append("1 solo telefono" if k_tel == 1 else f"{k_tel} telefoni")
+        if parti:
+            return f"{n} sinistri su {' e '.join(parti)}"
+        if feature == "n_sinistri" and contributi.get("n_sinistri", 0.0) > 0:
+            return f"{n} sinistri collegati tra loro"
+        return None
     if feature == "quota_multi_ruolo":
         m = int(f.get("persone_multi_ruolo", 0))
         if m <= 0:
@@ -131,8 +143,10 @@ def motivazioni(
     positivi = [k for k, v in ordinati if v > 0 and coerente(k)]
     altri = [k for k, v in ordinati if v <= 0 and coerente(k)]
     frasi: list[str] = []
+    # IBAN e telefoni compaiono nella frase solo se spingono davvero lo score in alto nel verso della frase
+    utili = {k: (v if coerente(k) else 0.0) for k, v in contributi.items()}
     for feature in positivi + altri:
-        frase = _frase(feature, feature_gruppo)
+        frase = _frase(feature, feature_gruppo, utili)
         if frase and frase not in frasi:
             frasi.append(frase)
         if len(frasi) == n:
