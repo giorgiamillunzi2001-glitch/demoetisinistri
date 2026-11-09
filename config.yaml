@@ -5,7 +5,8 @@ asis:
     orario_notturno: 20
     verbale_autorita: 15
     testimone: 10
-  threshold: 50
+  # Tarata perche' le regole segnalino circa il 24% dei sinistri (quota a rischio frode IVASS 2024)
+  threshold: 45
 scoring:
   soglia_media: 40
   soglia_alta: 70
@@ -15,10 +16,21 @@ scoring:
 business:
   premi_rc_auto: 239300000
   loss_ratio: 0.75
-  quota_frodi_extra_evitate: 0.01
+  # Oggi l'antifrode di mercato vale circa il 2% del costo dei sinistri; ipotesi: il grafo aggiunge un quarto in piu'
+  quota_frodi_extra_evitate: 0.005
   costi_annui: 300000
   costo_una_tantum: 500000
   costo_indagine: 150
+# Statistiche pubbliche usate per calibrare dati sintetici e business case
+calibrazione:
+  costo_medio_sinistro: 4962          # IVASS, Relazione annuale 2024, autovetture
+  quota_rischio_frode: 0.24           # IVASS antifrode 2024: 613 mila su 2,509 mln
+  quota_approfondimenti: 0.116        # IVASS antifrode 2024: 292 mila
+  quota_frodi_accertate: 0.015        # IVASS antifrode 2024: 38 mila
+  risparmio_medio_frode: 5300         # IVASS antifrode 2024: 202,5 mln / 38 mila
+  rischio_nord: 0.215                 # IVASS antifrode 2023
+  rischio_sud: 0.399                  # IVASS antifrode 2023
+  rischio_campania: 0.51              # IVASS antifrode 2023
 paths:
   data_dir: data
   raw_dir: data/raw

@@ -189,6 +189,8 @@ def render() -> None:
     )
 
     st.subheader("Dati sintetici")
+    st.write("Dati sintetici calibrati su statistiche pubbliche IVASS 2023-2024 (costo medio, quota di sinistri a "
+             "rischio frode, distribuzione territoriale). La quota di frodi è sovracampionata per rendere visibili gli anelli.")
     st.caption(f"Dataset attuale: {len(p['sinistri'])} sinistri, {len(p['coinvolgimenti'])} coinvolgimenti, "
                f"{int(p['sinistri']['label_frode'].sum())} sinistri fraudolenti.")
     with st.form("dati"):
